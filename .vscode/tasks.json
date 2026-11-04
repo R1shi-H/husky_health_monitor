@@ -1,0 +1,45 @@
+{
+  // Terminal > Run Task… (Ctrl+Shift+B runs the build)
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build",
+      "detail": "colcon build in the workspace this package lives in",
+      "type": "shell",
+      "command": "source /opt/ros/jazzy/setup.bash && colcon build --packages-select husky_health_monitor",
+      "options": { "cwd": "${workspaceFolder}/../.." },
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run with fake robot",
+      "detail": "Build, then start the mock Husky and the monitor; open http://localhost:8088",
+      "type": "shell",
+      "command": "${workspaceFolder}/run_local_test.sh ${input:faults}",
+      "dependsOn": "Build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Terminal view",
+      "detail": "Health readout from the monitor running on this computer",
+      "type": "shell",
+      "command": "python3 husky_health_monitor/cli.py --watch",
+      "problemMatcher": []
+    },
+    {
+      "label": "Unit tests",
+      "type": "shell",
+      "command": "python3 -m pytest -q test",
+      "group": "test",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "faults",
+      "type": "promptString",
+      "description": "Faults to inject, comma-separated (e.g. gps_1,low_battery), or blank for a healthy robot",
+      "default": ""
+    }
+  ]
+}

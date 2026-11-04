@@ -1,0 +1,16 @@
+{
+  // ROS 2 Jazzy uses the system Python; these paths let the editor resolve rclpy and message imports
+  "python.defaultInterpreterPath": "/usr/bin/python3",
+  "python.analysis.extraPaths": ["/opt/ros/jazzy/lib/python3.12/site-packages"],
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestArgs": ["test"],
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true
+  },
+  "files.associations": {
+    "*.launch.py": "python"
+  },
+  "editor.rulers": [100]
+}
