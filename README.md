@@ -37,7 +37,7 @@ OVERALL SYSTEM STATUS:          ✗ ERROR
 ## Run it on the Husky
 
 The commands below use placeholders for the robot's addresses, which are kept out of
-this repo. Get the real values from the team's setup notes:
+this repo. Get the real values from the setup notes:
 `<husky-tailscale-ip>` (also shown by `tailscale status` as `cpr-a300-00095`),
 `<husky-ip>` (the robot's onboard network address) and `<robot-user>` (its login).
 
@@ -73,7 +73,7 @@ this repo. Get the real values from the team's setup notes:
 4. View it:
    - Browser, from any machine on Tailscale: `http://<husky-tailscale-ip>:8088`
    - Terminal on the robot: `ros2 run husky_health_monitor health_status --watch`
-   - Terminal on your laptop (plain Python, no ROS setup needed):
+   - Terminal on a laptop (plain Python, no ROS setup needed):
      `python3 husky_health_monitor/cli.py --url http://<husky-tailscale-ip>:8088 --watch`
 
    If the page doesn't load over Tailscale, tunnel it through SSH instead:
@@ -95,7 +95,7 @@ That makes it usable from scripts, e.g. a pre-mission check.
 
 ## Develop without the robot
 
-One command runs a fake Husky and the monitor together, entirely on this computer:
+One command runs a fake Husky and the monitor together, entirely on a local computer:
 
 ```bash
 ~/health_ws/src/husky_health_monitor/run_local_test.sh gps_1,low_battery
@@ -122,7 +122,7 @@ ros2 launch husky_health_monitor health_monitor.launch.py               # termin
 ```
 
 Then open `http://localhost:8088`, or run `ros2 run husky_health_monitor health_status --watch`
-in a third terminal. Stop both with Ctrl-C. To talk to the Husky again, open a fresh terminal.
+in a third terminal. Stop both with Ctrl-C. To talk to the Husky again, open a new terminal.
 
 Available faults: `low_battery`, `estop`, `gps_1`, `no_fix`, `slow_imu`, `rear_camera`,
 `joystick` (GCS PS5 disconnected), `tilt` (30° slope), `diagnostics`. On a laptop the
