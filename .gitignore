@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# colcon output, in case the repo is ever built from its own folder
+build/
+install/
+log/

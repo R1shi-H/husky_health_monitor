@@ -1,0 +1,277 @@
+# Health checks for the MORS Code Husky A300 (a300_00095).
+#
+# Topic and node names are relative to robot_namespace unless they start with "/".
+# Node names may use * wildcards; a pattern starting with * matches in any namespace.
+# systemd checks ask `systemctl` on the computer the monitor runs on, so run it onboard.
+#
+# Rates below are deliberately conservative starting points. On the robot, run
+#   ros2 run husky_health_monitor health_status --calibrate
+# to compare measured rates with expected_hz and tighten them.
+# Warn fires below 80% of expected_hz, error below 50%, and STALE after timeout_s
+# (default: 3 periods, at least 2 s). See README.md for every check type and option.
+
+robot_namespace: a300_00095
+update_rate_hz: 1.0
+startup_grace_s: 8.0      # don't report missing data until discovery has had time to settle
+graph_period_s: 3.0       # how often to re-read the ROS graph (nodes, topics, publishers)
+executor: events          # events = rclpy's low-overhead EventsExecutor; single = the classic one
+
+web:
+  enabled: true
+  host: 0.0.0.0           # 127.0.0.1 = reachable only through an SSH tunnel
+  port: 8088
+
+history:
+  memory_minutes: 15      # trend window kept in RAM for the dashboard
+  log_dir: ~/.ros/husky_health
+  log_period_s: 10        # full snapshot to the log this often (0 = status changes only)
+  keep_days: 7
+
+groups:
+  - name: ROS 2
+    checks:
+      - name: ROS graph
+        type: ros_graph
+        min_nodes: 5
+        description: Catches DDS / discovery server problems (wrong domain, missing super client).
+      - name: Clearpath diagnostics
+        type: diagnostics
+        topic: diagnostics_agg
+        expected_hz: 1
+        critical: false
+        description: Clearpath's own diagnostic aggregator, reduced to its worst entries.
+      - name: TF
+        type: rate
+        topic: tf
+        expected_hz: 10
+
+  - name: Platform
+    checks:
+      - name: Battery
+        type: battery
+        topic: platform/bms/state
+        warn_below_percent: 30
+        error_below_percent: 15
+        timeout_s: 10
+        show_detail: true       # voltage and current under the percentage
+      - name: Emergency stop
+        type: bool
+        topic: platform/emergency_stop
+        ok_value: false
+        true_label: ENGAGED
+        false_label: RELEASED
+        bad_level: warn
+        bad_detail: robot cannot drive until the e-stop is released
+      - name: Safety stop
+        type: bool
+        topic: platform/safety_stop
+        ok_value: false
+        true_label: ACTIVE
+        false_label: CLEAR
+        bad_level: warn
+      - name: MCU
+        type: rate
+        topic: platform/mcu/status
+        expected_hz: 1
+      - name: Motor drivers
+        type: rate
+        topic: platform/motors/feedback
+        expected_hz: 20
+      - name: Wheel odometry
+        type: rate
+        topic: platform/odom_filtered
+        expected_hz: 20
+      - name: Joint states
+        type: rate
+        topic: platform/joint_states
+        expected_hz: 20
+      - name: Controller manager
+        type: node
+        node: controller_manager
+
+  - name: Sensors
+    checks:
+      # Orientation from the Fixposition INS (localization/odom carries it too)
+      - name: IMU orientation
+        type: orientation
+        topic: sensors/ins_0/xvn/odometry_enu
+        field: pose.pose.orientation
+        expected_hz: 5
+        warn_tilt_deg: 25       # tune or remove once we know what the Husky normally sees
+        show_detail: true       # roll and pitch under the yaw
+      # status.status: -1 NO FIX, 0 GNSS FIX, 1 RTK FLOAT, 2 RTK FIXED
+      # (add min_status: 2 to warn whenever the fix is not RTK FIXED)
+      - name: GPS 0
+        type: navsat
+        topic: sensors/ins_0/gps_0/fix
+        expected_hz: 5
+      - name: GPS 1
+        type: navsat
+        topic: sensors/ins_0/gps_1/fix
+        expected_hz: 5
+      - name: INS IMU
+        type: rate
+        topic: sensors/ins_0/imu/data
+        expected_hz: 50
+      - name: IMU 0
+        type: rate
+        topic: sensors/imu_0/data
+        expected_hz: 100
+      - name: 2D lidar
+        type: rate
+        topic: sensors/lidar2d_0/scan_filtered
+        expected_hz: 10
+      # The voxel-filtered cloud is the smallest 3D lidar topic, which keeps the monitor cheap
+      - name: 3D lidar
+        type: rate
+        topic: sensors/lidar3d_0/pointcloud_voxel
+        expected_hz: 5
+      - name: Front camera (OAK-D)
+        type: rate
+        topic: oak_d_pro_w_front/image_color/compressed
+        expected_hz: 10
+        critical: false
+      - name: Rear camera (OAK-D)
+        type: rate
+        topic: oak_d_pro_w_rear/image_color/compressed
+        expected_hz: 10
+        critical: false
+      # sensors/camera_2/image_raw_throttle/compressed or camera_info would be lighter to watch
+      - name: PTZ camera (Axis)
+        type: rate
+        topic: sensors/camera_2/image_raw/compressed
+        expected_hz: 10
+        critical: false
+
+  - name: Operator Control
+    checks:
+      # Controllers only publish while connected; one that isn't connected is shown grey,
+      # not as a fault. If a connected controller shows NOT CONNECTED while untouched, its
+      # joy node isn't repeating messages: raise timeout_s or set its autorepeat_rate.
+      - name: GCS PS5 controller
+        type: rate
+        topic: operators/gcs_ps5/joy
+        timeout_s: 2
+        idle_ok: true
+        ok_label: CONNECTED
+        idle_label: NOT CONNECTED
+      - name: Steam Deck 1
+        type: rate
+        topic: operators/steamdeck_1/joy
+        timeout_s: 2
+        idle_ok: true
+        ok_label: CONNECTED
+        idle_label: NOT CONNECTED
+      - name: Steam Deck 2
+        type: rate
+        topic: operators/steamdeck_2/joy
+        timeout_s: 2
+        idle_ok: true
+        ok_label: CONNECTED
+        idle_label: NOT CONNECTED
+      - name: Teleop nodes
+        type: node
+        node: joy_teleop/*
+        missing_level: warn
+      - name: Joystick cmd_vel
+        type: rate
+        topic: joy_teleop/cmd_vel
+        idle_ok: true
+        ok_label: ACTIVE
+        timeout_s: 1
+      - name: cmd_vel
+        type: rate
+        topic: cmd_vel
+        idle_ok: true
+        ok_label: ACTIVE
+        timeout_s: 1
+
+  - name: Network
+    checks:
+      - name: Tailscale
+        type: systemd
+        unit: tailscaled.service
+        missing_level: warn
+        show_detail: true       # tailscaled's status line: connection, account, IPs
+      - name: Internet
+        type: ping
+        host: 1.1.1.1
+        warn_ms: 250
+        missing_level: warn
+      - name: Wi-Fi
+        type: bool
+        topic: platform/wifi_connected
+        ok_value: true
+        true_label: CONNECTED
+        false_label: DISCONNECTED
+        bad_level: warn
+        critical: false
+      # Uncomment once you know the ground station's address (Doodle Labs or Tailscale IP)
+      # - name: Ground station link
+      #   type: ping
+      #   host: <ground-station-ip>
+      #   warn_ms: 250
+      #   missing_level: warn
+
+  - name: Navigation
+    checks:
+      - name: Localization
+        type: rate
+        topic: localization/odom
+        expected_hz: 5
+        critical: false
+      - name: Localization GPS
+        type: navsat
+        topic: localization/fix
+        timeout_s: 5
+        critical: false
+      - name: Autonomy
+        type: topic
+        topic: autonomy/status
+        min_publishers: 1
+        critical: false
+
+  # MORS Code services run as systemd units (mors@<name>.service)
+  - name: MORS Services
+    checks:
+      - name: Velocity mux
+        type: systemd
+        unit: mors@velocity_mux.service
+      - name: Camera streams
+        type: systemd
+        unit: mors@camera_streams.service
+        critical: false
+      - name: ATAK bridge
+        type: systemd
+        unit: mors@atak_bridge.service
+        critical: false
+      # GPS navigation: service name TBD
+      # - name: GPS navigation
+      #   type: systemd
+      #   unit: mors@<name>.service
+      - name: Target tracking
+        type: bool
+        topic: object_tracking/enabled
+        ok_value: any           # optional feature: report it, never a fault
+        true_label: ENABLED
+        false_label: DISABLED
+        idle_ok: true
+        idle_label: NOT RUNNING
+        critical: false
+
+  # System checks are shown as tiles at the top of the dashboard
+  - name: Computer
+    checks:
+      - name: CPU
+        type: system
+        metric: cpu
+      - name: Memory
+        type: system
+        metric: memory
+      - name: Disk
+        type: system
+        metric: disk
+        path: /
+      - name: CPU temperature
+        type: system
+        metric: temperature

@@ -1,0 +1,835 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Husky Health</title>
+<script>
+  try { const t = localStorage.getItem('hh-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --surface-2: #f1f0ec;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --axis: #898781;
+    --grid: #e1e0d9;
+    --baseline: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.10);
+    --series: #2a78d6;
+    --series-wash: rgba(42, 120, 214, 0.10);
+    --good: #0ca30c;
+    --warning: #fab219;
+    --critical: #d03b3b;
+    --neutral: #898781;
+    --tint-warn: rgba(250, 178, 25, 0.13);
+    --tint-error: rgba(208, 59, 59, 0.08);
+    --hover: rgba(11, 11, 11, 0.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --surface-2: #242422;
+      --ink: #f0efec;
+      --ink-2: #c3c2b7;
+      --axis: #898781;
+      --grid: #2c2c2a;
+      --baseline: #383835;
+      --border: rgba(255, 255, 255, 0.10);
+      --series: #3987e5;
+      --series-wash: rgba(57, 135, 229, 0.16);
+      --tint-warn: rgba(250, 178, 25, 0.10);
+      --tint-error: rgba(208, 59, 59, 0.16);
+      --hover: rgba(255, 255, 255, 0.05);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --surface-2: #242422;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --axis: #898781;
+    --grid: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --series: #3987e5;
+    --series-wash: rgba(57, 135, 229, 0.16);
+    --tint-warn: rgba(250, 178, 25, 0.10);
+    --tint-error: rgba(208, 59, 59, 0.16);
+    --hover: rgba(255, 255, 255, 0.05);
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; }
+  body {
+    background: var(--page);
+    color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2 { margin: 0; font-weight: 600; }
+  h1 { font-size: 18px; }
+  h2 { font-size: 14px; }
+  code { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+  button { font: inherit; color: inherit; }
+
+  .wrap { max-width: 1440px; margin: 0 auto; padding: 16px; }
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  .title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .robot { color: var(--ink-2); font-size: 13px; }
+  .top-right { display: flex; align-items: center; gap: 10px; }
+  .conn { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); }
+  .conn .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--neutral); }
+  .conn.live .dot { background: var(--good); }
+  .conn.lost .dot { background: var(--critical); }
+  .icon-btn { border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+  .icon-btn:hover { background: var(--hover); }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .banner { border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; background: var(--tint-error); border: 1px solid var(--border); }
+  main.lost .dim-when-lost { opacity: 0.55; }
+
+  /* status icon: shape + color, always paired with a text label nearby */
+  .ico { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; font-size: 11px; font-weight: 700; line-height: 1; }
+  .ico.lg { width: 40px; height: 40px; font-size: 22px; }
+  .ico.sm { width: 14px; height: 14px; font-size: 9px; }
+  .ico.ok { background: var(--good); color: #fff; }
+  .ico.warn { background: var(--warning); color: #0b0b0b; }
+  .ico.error { background: var(--critical); color: #fff; }
+  .ico.idle { border: 2px solid var(--neutral); }
+  .ico.waiting { border: 2px solid var(--neutral); color: var(--neutral); }
+
+  /* overall */
+  .overall { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 16px 32px; margin-bottom: 16px; }
+  .overall-head { display: flex; align-items: center; gap: 14px; }
+  .overall-label { font-size: 28px; font-weight: 650; letter-spacing: 0.01em; line-height: 1.1; }
+  .overall-sub { color: var(--ink-2); font-size: 13px; margin-top: 2px; }
+  .issues { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 4px; }
+  .issues li { display: flex; gap: 8px; align-items: flex-start; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+  .issues li:hover { background: var(--hover); }
+  .issues .what { font-weight: 550; }
+  .issues .why { color: var(--ink-2); }
+  .all-good { color: var(--ink-2); margin-top: 14px; }
+  .timeline-head, .axis-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-2); }
+  .axis-row { color: var(--axis); font-size: 11px; margin-top: 4px; }
+  .timeline-svg { display: block; width: 100%; height: 22px; margin-top: 6px; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+  /* tiles */
+  .tiles { display: grid; gap: 16px; margin-bottom: 16px; }
+  .tiles.with-hero { grid-template-columns: minmax(260px, 1fr) minmax(0, 2fr); }
+  /* all system tiles on one row when they fit, otherwise two per row */
+  .sys-wrap { container-type: inline-size; min-width: 0; }
+  .sys-tiles { display: grid; gap: 16px; height: 100%; grid-template-columns: repeat(var(--narrow), minmax(0, 1fr)); }
+  @container (min-width: 720px) { .sys-tiles { grid-template-columns: repeat(var(--n), minmax(0, 1fr)); } }
+  .tile { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .tile-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 2px 8px; color: var(--ink-2); font-size: 13px; }
+  .tile-state { display: inline-flex; align-items: center; gap: 6px; color: var(--ink); font-size: 12px; white-space: nowrap; }
+  .tile-value { font-size: 28px; font-weight: 600; line-height: 1.1; }
+  .tile.hero .tile-value { font-size: 48px; }
+  .tile-sub { color: var(--ink-2); font-size: 12px; min-height: 17px; }
+  .meter { height: 8px; border-radius: 4px; background: color-mix(in srgb, var(--meter, var(--series)) 18%, transparent); overflow: hidden; }
+  .meter > div { height: 100%; border-radius: 4px; background: var(--meter, var(--series)); transition: width 0.4s; }
+  .tile svg { display: block; width: 100%; height: 36px; margin-top: auto; }
+
+  /* group cards */
+  .groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; align-items: start; margin-bottom: 16px; }
+  .group { padding: 12px 8px 8px; }
+  .group-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px 8px; }
+  .group-sum { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
+  .row { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto 76px; gap: 2px 10px; align-items: center; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+  .row:hover { background: var(--hover); }
+  .row:focus-visible { outline: 2px solid var(--series); outline-offset: -2px; }
+  .row.warn { background: var(--tint-warn); }
+  .row.error { background: var(--tint-error); }
+  .row .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .value { text-align: right; font-weight: 550; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .row .reason { grid-column: 2 / -1; font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
+  .row svg.spark { display: block; width: 76px; height: 22px; }
+  .detail { margin: 2px 8px 8px 36px; padding: 10px 0 4px; border-top: 1px solid var(--grid); }
+  .kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 12px; margin: 0; font-size: 12px; }
+  .kv dt { color: var(--ink-2); }
+  .kv dd { margin: 0; overflow-wrap: anywhere; }
+  .diag-items { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; display: grid; gap: 3px; }
+  .diag-items li { display: flex; gap: 6px; align-items: flex-start; }
+  .chart-title { font-size: 12px; color: var(--ink-2); margin: 10px 0 4px; }
+  svg.chart { display: block; width: 100%; height: 110px; }
+  svg text { font: 11px system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--axis); }
+
+  /* events and graph */
+  .lower { display: grid; gap: 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th { text-align: left; font-weight: 550; color: var(--ink-2); font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--grid); }
+  td { padding: 5px 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.time { color: var(--ink-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .change { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .table-wrap { overflow-x: auto; max-height: 520px; overflow-y: auto; margin-top: 10px; }
+  .empty { color: var(--ink-2); padding: 8px 0 0; }
+  details.card > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 10px; }
+  details.card > summary::-webkit-details-marker { display: none; }
+  details.card > summary::before { content: '▸'; color: var(--ink-2); font-size: 12px; transition: transform 0.15s; }
+  details.card[open] > summary::before { transform: rotate(90deg); }
+  .summary-note { color: var(--ink-2); font-size: 13px; }
+  .tools { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  .tabs { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .tabs button { border: 0; background: transparent; padding: 5px 12px; cursor: pointer; }
+  .tabs button[aria-pressed="true"] { background: var(--surface-2); font-weight: 600; }
+  .tools input[type="search"] { flex: 1 1 200px; min-width: 0; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; }
+  .tools label { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 13px; }
+  footer { color: var(--ink-2); font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px 16px; justify-content: space-between; padding: 8px 0 24px; }
+
+  .tip { position: fixed; z-index: 10; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; font-size: 12px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); white-space: nowrap; }
+
+  @media (max-width: 760px) {
+    .overall { grid-template-columns: 1fr; }
+    .groups { grid-template-columns: 1fr; }
+    .tiles.with-hero { grid-template-columns: 1fr; }
+    .tile.hero .tile-value { font-size: 40px; }
+  }
+  @media (max-width: 400px) {
+    .row { grid-template-columns: 18px minmax(0, 1fr) auto; }
+    .row svg.spark { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="title">
+      <h1>Husky A300 health</h1>
+      <span class="robot" id="robot">Connecting…</span>
+    </div>
+    <div class="top-right">
+      <span class="conn" id="conn"><span class="dot"></span><span id="conn-text">Connecting</span></span>
+      <button class="icon-btn" id="theme" type="button">Dark mode</button>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="banner" id="lost-banner" hidden></div>
+
+    <section class="card overall dim-when-lost" aria-live="polite">
+      <div>
+        <div class="overall-head">
+          <span class="ico lg waiting" id="overall-ico">…</span>
+          <div>
+            <div class="overall-label" id="overall-label">Starting</div>
+            <div class="overall-sub" id="overall-sub">Waiting for the monitor</div>
+          </div>
+        </div>
+        <ul class="issues" id="issues"></ul>
+        <div class="all-good" id="all-good" hidden></div>
+      </div>
+      <div>
+        <div class="timeline-head">
+          <span>Overall status, last 15 minutes</span>
+          <span class="legend">
+            <span><span class="swatch" style="background:var(--good)"></span>Healthy</span>
+            <span><span class="swatch" style="background:var(--warning)"></span>Warning</span>
+            <span><span class="swatch" style="background:var(--critical)"></span>Error</span>
+          </span>
+        </div>
+        <svg class="timeline-svg" id="timeline" role="img" aria-label="Overall status over the last 15 minutes"></svg>
+        <div class="axis-row"><span>15 min ago</span><span>now</span></div>
+      </div>
+    </section>
+
+    <section class="tiles dim-when-lost" id="tiles"></section>
+    <section class="groups dim-when-lost" id="groups"></section>
+
+    <section class="lower">
+      <div class="card">
+        <h2>Recent status changes</h2>
+        <div class="table-wrap" style="max-height:320px">
+          <table>
+            <thead><tr><th>Time</th><th>Check</th><th>Change</th><th>Reason</th></tr></thead>
+            <tbody id="events"></tbody>
+          </table>
+          <div class="empty" id="events-empty">No status changes since the monitor started.</div>
+        </div>
+      </div>
+
+      <details class="card" id="graph">
+        <summary><h2>ROS graph</h2><span class="summary-note" id="graph-note"></span></summary>
+        <div class="tools">
+          <div class="tabs" role="group" aria-label="Graph view">
+            <button type="button" data-tab="topics" aria-pressed="true">Topics</button>
+            <button type="button" data-tab="nodes" aria-pressed="false">Nodes</button>
+          </div>
+          <input type="search" id="graph-search" placeholder="Filter by name" aria-label="Filter by name">
+          <label id="unwatched-label"><input type="checkbox" id="unwatched"> Unwatched only</label>
+        </div>
+        <div class="table-wrap"><table id="graph-table"></table></div>
+      </details>
+    </section>
+  </main>
+
+  <footer id="footer"></footer>
+</div>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+'use strict';
+
+const WINDOW_S = 900;   // history kept in the page
+const SPARK_S = 300;    // row sparklines
+const POLL_MS = 1000;
+const RANK = { ok: 0, idle: 0, waiting: 1, warn: 2, error: 3 };
+const RANK_LEVEL = ['ok', 'waiting', 'warn', 'error'];
+const LEVEL_TEXT = { ok: 'Healthy', idle: 'Idle', waiting: 'Waiting', warn: 'Warning', error: 'Error' };
+const GLYPH = { ok: '✓', idle: '', waiting: '…', warn: '!', error: '✕' };
+const LEVEL_COLOR = { ok: 'var(--good)', idle: 'var(--neutral)', waiting: 'var(--neutral)', warn: 'var(--warning)', error: 'var(--critical)' };
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const load = key => { try { return localStorage.getItem(key); } catch (e) { return null; } };
+const save = (key, value) => { try { localStorage.setItem(key, value); } catch (e) {} };
+
+const state = {
+  snap: null,
+  t: [],               // sample times (s, robot clock)
+  lvl: [],             // overall rank per sample
+  v: new Map(),        // check id -> metric per sample
+  lastT: 0,
+  lastNewDataAt: 0,
+  connected: false,
+  layoutKey: '',
+  rows: new Map(),     // check id -> row elements
+  expanded: new Set(JSON.parse(load('hh-expanded') || '[]')),
+  graph: null,
+  graphTab: 'topics',
+};
+
+function ico(level, size = '') {
+  return `<span class="ico ${size} ${level}" role="img" aria-label="${LEVEL_TEXT[level]}">${GLYPH[level]}</span>`;
+}
+
+// ---------- formatting ----------
+const fmtTime = t => new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+function fmtNum(v, digits = 1) {
+  if (v == null || !isFinite(v)) return '–';
+  return Math.abs(v) >= 20 ? Math.round(v).toLocaleString() : v.toFixed(digits);
+}
+function fmtAge(s) {
+  if (s == null) return 'never';
+  if (s < 1) return 'just now';
+  if (s < 60) return `${s.toFixed(1)} s ago`;
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  return `${(s / 3600).toFixed(1)} h ago`;
+}
+function fmtBytes(b) {
+  if (!b) return '–';
+  if (b < 1024) return `${b} B/s`;
+  if (b < 1048576) return `${(b / 1024).toFixed(1)} KB/s`;
+  return `${(b / 1048576).toFixed(1)} MB/s`;
+}
+function fmtDuration(s) {
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h ? `${h} h ${m} min` : `${m} min`;
+}
+function unitFor(c) {
+  if (c.kind === 'rate' || c.kind === 'navsat') return ' Hz';
+  if (c.kind === 'battery') return '%';
+  if (c.kind === 'system') return c.system_metric === 'temperature' ? ' °C' : '%';
+  if (c.kind === 'ping') return ' ms';
+  if (c.kind === 'orientation') return '°';
+  return '';
+}
+function metricLabel(c) {
+  return { rate: 'Message rate', navsat: 'Message rate', battery: 'Charge', system: c.system_metric === 'temperature' ? 'Temperature' : 'Usage',
+           ping: 'Round trip', node: 'Matching nodes', bool: 'Value (1 = true)', ros_graph: 'Nodes visible', field: 'Value',
+           orientation: 'Tilt (larger of roll and pitch)' }[c.kind] || 'Value';
+}
+function yMaxFor(c, values) {
+  const max = Math.max(0, ...values.filter(v => v != null && isFinite(v)));
+  if (c.kind === 'battery' || (c.kind === 'system' && c.system_metric !== 'temperature')) return 100;
+  if (c.kind === 'system') return Math.max(100, max * 1.1);
+  if (c.kind === 'bool') return 1;
+  if (c.kind === 'orientation') return Math.max(c.error_tilt_deg || c.warn_tilt_deg || 30, max * 1.15);
+  const expected = c.kind === 'rate' || c.kind === 'navsat' ? c.expected_hz || 0 : 0;
+  return Math.max(expected * 1.25, max * 1.15, 1);
+}
+
+// ---------- data ----------
+async function getJSON(path) {
+  const r = await fetch(path, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+function seed(h) {
+  if (!h || !Array.isArray(h.t) || !h.t.length) return;
+  state.t = h.t.slice();
+  state.lvl = h.overall.slice();
+  for (const [id, s] of Object.entries(h.checks)) state.v.set(id, s.metric.slice());
+  state.lastT = h.t[h.t.length - 1];
+}
+
+function ingest(snap) {
+  if (snap.time <= state.lastT) return;
+  state.lastT = snap.time;
+  state.lastNewDataAt = Date.now();
+  state.t.push(snap.time);
+  state.lvl.push(RANK[snap.overall.level]);
+  const seen = new Set();
+  for (const g of snap.groups) for (const c of g.checks) {
+    seen.add(c.id);
+    let arr = state.v.get(c.id);
+    if (!arr) { arr = new Array(state.t.length - 1).fill(null); state.v.set(c.id, arr); }
+    arr.push(c.metric ?? null);
+  }
+  for (const [id, arr] of state.v) if (!seen.has(id)) arr.push(null);
+  let drop = 0;
+  while (drop < state.t.length && state.t[drop] < snap.time - WINDOW_S) drop++;
+  if (drop) {
+    state.t.splice(0, drop);
+    state.lvl.splice(0, drop);
+    for (const arr of state.v.values()) arr.splice(0, drop);
+  }
+}
+
+function firstIndexAfter(t0) {
+  let lo = 0, hi = state.t.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (state.t[mid] < t0) lo = mid + 1; else hi = mid; }
+  return lo;
+}
+
+// ---------- charts ----------
+function linePaths(ts, vs, xOf, yOf, base) {
+  let line = '', area = '', seg = [];
+  const flush = () => {
+    if (!seg.length) return;
+    line += seg.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join('');
+    area += `M${seg[0][0].toFixed(1)} ${base}` + seg.map(p => `L${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join('') + `L${seg[seg.length - 1][0].toFixed(1)} ${base}Z`;
+    seg = [];
+  };
+  for (let i = 0; i < ts.length; i++) {
+    const v = vs[i];
+    if (v == null || !isFinite(v)) { flush(); continue; }
+    seg.push([xOf(ts[i]), yOf(v)]);
+  }
+  flush();
+  return { line, area };
+}
+
+// Draws a single-series line chart into svg; axes=true adds y labels and an expected-rate line.
+function drawSeries(svg, check, spanS, axes) {
+  const w = Math.max(40, Math.round(svg.getBoundingClientRect().width)) || 76;
+  const h = Math.round(svg.getBoundingClientRect().height) || 22;
+  const arr = state.v.get(check.id) || [];
+  // Sparklines stretch over whatever history exists until it fills their window
+  if (!axes && state.t.length) spanS = Math.min(spanS, Math.max(30, state.lastT - state.t[0]));
+  const start = firstIndexAfter(state.lastT - spanS);
+  const ts = state.t.slice(start), vs = arr.slice(start);
+  const padL = axes ? 34 : 1, padR = 2, padT = axes ? 8 : 2, padB = 2;
+  const x0 = state.lastT - spanS, yMax = yMaxFor(check, vs);
+  const xOf = t => padL + (t - x0) / spanS * (w - padL - padR);
+  const yOf = v => padT + (1 - Math.min(v, yMax) / yMax) * (h - padT - padB);
+  const base = (h - padB).toFixed(1);
+  const { line, area } = linePaths(ts, vs, xOf, yOf, base);
+  const unit = unitFor(check);
+  let extra = '';
+  if (axes) {
+    extra += `<line x1="${padL}" x2="${w - padR}" y1="${base}" y2="${base}" stroke="var(--baseline)" stroke-width="1"/>`;
+    extra += `<line x1="${padL}" x2="${w - padR}" y1="${padT}" y2="${padT}" stroke="var(--grid)" stroke-width="1"/>`;
+    extra += `<text x="${padL - 6}" y="${padT + 4}" text-anchor="end">${esc(fmtNum(yMax))}</text>`;
+    extra += `<text x="${padL - 6}" y="${h - padB}" text-anchor="end">0</text>`;
+    if (check.expected_hz && (check.kind === 'rate' || check.kind === 'navsat')) {
+      const y = yOf(check.expected_hz).toFixed(1);
+      extra += `<line x1="${padL}" x2="${w - padR}" y1="${y}" y2="${y}" stroke="var(--baseline)" stroke-width="1"/>`;
+      extra += `<text x="${w - padR}" y="${y - 4}" text-anchor="end">expected ${esc(fmtNum(check.expected_hz))} Hz</text>`;
+    }
+  }
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.innerHTML = extra +
+    `<path d="${area}" fill="var(--series-wash)"/>` +
+    `<path d="${line}" fill="none" stroke="var(--series)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>` +
+    `<g class="hover" visibility="hidden"><line y1="${padT}" y2="${base}" stroke="var(--axis)" stroke-width="1"/>` +
+    `<circle r="4" fill="var(--series)" stroke="var(--surface)" stroke-width="2"/></g>`;
+  svg._model = { ts, vs, xOf, yOf, w, fmt: v => `${fmtNum(v)}${unit}` };
+  if (svg._pointer) hoverAt(svg, ...svg._pointer);
+}
+
+const tip = $('#tip');
+function showTip(x, y, html) {
+  tip.innerHTML = html;
+  tip.hidden = false;
+  const r = tip.getBoundingClientRect();
+  const left = Math.min(window.innerWidth - r.width - 8, x + 12);
+  const top = y - r.height - 10 < 4 ? y + 14 : y - r.height - 10;
+  tip.style.left = `${Math.max(4, left)}px`;
+  tip.style.top = `${top}px`;
+}
+function hideTip() { tip.hidden = true; }
+
+function hoverAt(svg, clientX, clientY) {
+  const m = svg._model, g = svg.querySelector('g.hover');
+  if (!m || !g || !m.ts.length) return;
+  const r = svg.getBoundingClientRect();
+  const x = (clientX - r.left) / r.width * m.w;
+  let best = -1, bestD = Infinity;
+  for (let i = 0; i < m.ts.length; i++) {
+    if (m.vs[i] == null) continue;
+    const d = Math.abs(m.xOf(m.ts[i]) - x);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  if (best < 0) { g.setAttribute('visibility', 'hidden'); hideTip(); return; }
+  const px = m.xOf(m.ts[best]), py = m.yOf(m.vs[best]);
+  g.setAttribute('visibility', 'visible');
+  g.querySelector('line').setAttribute('x1', px);
+  g.querySelector('line').setAttribute('x2', px);
+  g.querySelector('circle').setAttribute('cx', px);
+  g.querySelector('circle').setAttribute('cy', py);
+  showTip(clientX, clientY, `<b>${esc(m.fmt(m.vs[best]))}</b> · ${esc(fmtTime(m.ts[best]))}`);
+}
+function bindHover(svg) {
+  svg.addEventListener('pointermove', e => { svg._pointer = [e.clientX, e.clientY]; hoverAt(svg, e.clientX, e.clientY); });
+  svg.addEventListener('pointerleave', () => {
+    svg._pointer = null; hideTip();
+    const g = svg.querySelector('g.hover'); if (g) g.setAttribute('visibility', 'hidden');
+  });
+}
+
+function drawTimeline() {
+  const svg = $('#timeline');
+  const w = Math.round(svg.getBoundingClientRect().width) || 600, h = 22;
+  const x0 = state.lastT - WINDOW_S, xOf = t => (t - x0) / WINDOW_S * w;
+  const period = (state.snap && state.snap.update_period_s) || 1;
+  const runs = [];
+  for (let i = 0; i < state.t.length; i++) {
+    const t = state.t[i], lvl = RANK_LEVEL[state.lvl[i]] || 'waiting';
+    const end = i + 1 < state.t.length ? Math.min(state.t[i + 1], t + 3 * period) : t + period;
+    const last = runs[runs.length - 1];
+    if (last && last.lvl === lvl && t - last.end < 3 * period) last.end = end;
+    else runs.push({ lvl, start: t, end });
+  }
+  let out = `<rect x="0" y="0" width="${w}" height="${h}" rx="4" fill="var(--surface-2)"/>`;
+  for (const r of runs) {
+    const x = Math.max(0, xOf(r.start)), width = Math.max(2, xOf(r.end) - x - 2);
+    out += `<rect x="${x.toFixed(1)}" y="0" width="${width.toFixed(1)}" height="${h}" rx="4" fill="${LEVEL_COLOR[r.lvl]}"/>`;
+  }
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.innerHTML = out;
+  svg._runs = runs; svg._xOf = xOf; svg._w = w; svg._x0 = x0;
+}
+(() => {
+  const svg = $('#timeline');
+  svg.addEventListener('pointermove', e => {
+    const r = svg.getBoundingClientRect();
+    const t = svg._x0 + (e.clientX - r.left) / r.width * WINDOW_S;
+    const run = (svg._runs || []).find(run => t >= run.start && t <= run.end);
+    if (!run) { hideTip(); return; }
+    showTip(e.clientX, e.clientY, `${ico(run.lvl, 'sm')} <b>${LEVEL_TEXT[run.lvl]}</b> · ${esc(fmtTime(run.start))} – ${esc(fmtTime(run.end))}`);
+  });
+  svg.addEventListener('pointerleave', hideTip);
+})();
+
+// ---------- rendering ----------
+const isTileGroup = g => g.checks.length && g.checks.every(c => c.kind === 'system');
+const allChecks = snap => snap.groups.flatMap(g => g.checks.map(c => ({ ...c, group: g.name })));
+
+function render() {
+  const snap = state.snap;
+  if (!snap) return;
+  $('#robot').textContent = `${snap.robot} on ${snap.hostname || '?'}`;
+  renderOverall(snap);
+  drawTimeline();
+  renderTiles(snap);
+  renderGroups(snap);
+  renderEvents(snap);
+  renderFooter(snap);
+  renderConnection();
+  renderThemeButton();
+}
+
+function renderOverall(snap) {
+  const o = snap.overall, c = o.counts;
+  const ic = $('#overall-ico');
+  ic.className = `ico lg ${o.level}`;
+  ic.textContent = GLYPH[o.level];
+  ic.setAttribute('aria-label', LEVEL_TEXT[o.level]);
+  $('#overall-label').textContent = o.label;
+  const parts = [`${c.ok + c.idle} healthy`];
+  if (c.warn) parts.push(`${c.warn} warning${c.warn > 1 ? 's' : ''}`);
+  if (c.error) parts.push(`${c.error} error${c.error > 1 ? 's' : ''}`);
+  if (c.waiting) parts.push(`${c.waiting} waiting`);
+  $('#overall-sub').textContent = parts.join(' · ');
+  document.title = `${o.level === 'ok' ? '✓' : o.level === 'error' ? '✕' : o.level === 'warn' ? '!' : '…'} Husky ${o.label.toLowerCase()}`;
+
+  const issues = allChecks(snap).filter(x => RANK[x.level] >= RANK.warn)
+    .sort((a, b) => RANK[b.level] - RANK[a.level]);
+  $('#issues').innerHTML = issues.slice(0, 8).map(x =>
+    `<li data-id="${esc(x.id)}">${ico(x.level)}<span><span class="what">${esc(x.group)} › ${esc(x.name)}</span> — ${esc(x.value)}` +
+    (x.detail ? `<span class="why"> · ${esc(x.detail)}</span>` : '') + `</span></li>`).join('') +
+    (issues.length > 8 ? `<li class="why">and ${issues.length - 8} more</li>` : '');
+  const good = $('#all-good');
+  good.hidden = issues.length > 0;
+  good.textContent = c.waiting ? 'Checks are starting up.' : `All ${snap.monitor.checks} checks are healthy.`;
+}
+
+function renderTiles(snap) {
+  const checks = allChecks(snap);
+  const tiles = [];
+  const battery = checks.find(c => c.kind === 'battery');
+  if (battery) tiles.push({ check: battery, hero: true });
+  for (const g of snap.groups) if (isTileGroup(g)) for (const c of g.checks) tiles.push({ check: { ...c, group: g.name } });
+  const box = $('#tiles');
+  const key = tiles.map(t => t.check.id).join(',');
+  if (box.dataset.key !== key) {
+    box.dataset.key = key;
+    const tile = t => `
+      <div class="card tile${t.hero ? ' hero' : ''}" data-id="${esc(t.check.id)}">
+        <div class="tile-head"><span>${esc(t.check.name)}</span><span class="tile-state"></span></div>
+        <div class="tile-value"></div>
+        ${t.hero ? '<div class="meter"><div></div></div>' : ''}
+        <div class="tile-sub"></div>
+        <svg role="img"></svg>
+      </div>`;
+    const system = tiles.filter(t => !t.hero);
+    // battery on the left, system tiles in their own grid so none end up orphaned on a row
+    box.classList.toggle('with-hero', tiles.length > system.length && system.length > 0);
+    box.innerHTML = tiles.filter(t => t.hero).map(tile).join('') +
+      (system.length ? `<div class="sys-wrap"><div class="sys-tiles" style="--n:${system.length};--narrow:${Math.min(2, system.length)}">` +
+        `${system.map(tile).join('')}</div></div>` : '');
+    box.querySelectorAll('svg').forEach(bindHover);
+  }
+  for (const t of tiles) {
+    const c = t.check, el = box.querySelector(`[data-id="${CSS.escape(c.id)}"]`);
+    el.querySelector('.tile-state').innerHTML = `${ico(c.level, 'sm')}${LEVEL_TEXT[c.level]}`;
+    el.querySelector('.tile-value').textContent = c.value;
+    el.querySelector('.tile-sub').textContent = c.level === 'ok' ? (c.detail || subFor(c, snap)) : (c.detail || '');
+    if (t.hero) {
+      const meter = el.querySelector('.meter');
+      meter.style.setProperty('--meter', c.level === 'error' ? 'var(--critical)' : c.level === 'warn' ? 'var(--warning)' : 'var(--series)');
+      meter.firstElementChild.style.width = `${Math.max(0, Math.min(100, c.metric || 0))}%`;
+    }
+    const svg = el.querySelector('svg');
+    svg.setAttribute('aria-label', `${c.name}, last 15 minutes`);
+    drawSeries(svg, c, WINDOW_S, false);
+  }
+}
+function subFor(c, snap) {
+  const s = snap.system || {};
+  if (c.system_metric === 'cpu' && s.load != null) return `load ${s.load.toFixed(2)} on ${s.cores} cores`;
+  if (c.system_metric === 'disk') return `${c.path} filesystem`;
+  if (c.system_metric === 'memory' && s.uptime_s) return `up ${fmtDuration(s.uptime_s)}`;
+  return '';
+}
+
+function renderGroups(snap) {
+  const box = $('#groups');
+  const groups = snap.groups.filter(g => !isTileGroup(g));
+  const key = groups.map(g => g.name + ':' + g.checks.map(c => c.id).join(',')).join('|');
+  if (state.layoutKey !== key) {
+    state.layoutKey = key;
+    state.rows.clear();
+    box.innerHTML = groups.map(g => `
+      <article class="card group" data-group="${esc(g.name)}">
+        <header class="group-head"><h2>${esc(g.name)}</h2><span class="group-sum"></span></header>
+        <div class="rows">${g.checks.map(c => `
+          <div class="row" data-id="${esc(c.id)}" role="button" tabindex="0" aria-expanded="false">
+            <span class="ico-slot"></span><span class="name">${esc(c.name)}</span><span class="value"></span>
+            <svg class="spark" role="img" aria-label="${esc(c.name)}, last 5 minutes"></svg>
+            <span class="reason" hidden></span>
+          </div>
+          <div class="detail" hidden></div>`).join('')}
+        </div>
+      </article>`).join('');
+    for (const row of box.querySelectorAll('.row')) {
+      const id = row.dataset.id;
+      state.rows.set(id, { row, detail: row.nextElementSibling });
+      row.addEventListener('click', () => toggleRow(id));
+      row.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleRow(id); } });
+      bindHover(row.querySelector('svg'));
+    }
+  }
+  for (const g of groups) {
+    const card = box.querySelector(`[data-group="${CSS.escape(g.name)}"]`);
+    const healthy = g.checks.filter(c => RANK[c.level] === 0).length;
+    const bad = g.checks.filter(c => RANK[c.level] >= RANK.warn);
+    card.querySelector('.group-sum').innerHTML = `${ico(g.level, 'sm')}` +
+      (bad.length ? esc(countText(g.checks)) : `${healthy} of ${g.checks.length} healthy`);
+    for (const c of g.checks) updateRow(c);
+  }
+}
+function countText(checks) {
+  const e = checks.filter(c => c.level === 'error').length, w = checks.filter(c => c.level === 'warn').length;
+  return [e && `${e} error${e > 1 ? 's' : ''}`, w && `${w} warning${w > 1 ? 's' : ''}`].filter(Boolean).join(' · ');
+}
+
+function updateRow(c) {
+  const refs = state.rows.get(c.id);
+  if (!refs) return;
+  const { row, detail } = refs;
+  row.className = `row ${c.level}`;
+  row.querySelector('.ico-slot').innerHTML = ico(c.level);
+  row.querySelector('.value').textContent = c.value;
+  const reason = row.querySelector('.reason');
+  reason.hidden = !c.detail || !(RANK[c.level] >= RANK.warn || c.show_detail);
+  reason.textContent = c.detail || '';
+  drawSeries(row.querySelector('svg'), c, SPARK_S, false);
+  const open = state.expanded.has(c.id);
+  row.setAttribute('aria-expanded', open);
+  detail.hidden = !open;
+  if (open) renderDetail(detail, c);
+}
+
+function toggleRow(id) {
+  if (state.expanded.has(id)) state.expanded.delete(id); else state.expanded.add(id);
+  save('hh-expanded', JSON.stringify([...state.expanded]));
+  const c = state.snap && allChecks(state.snap).find(x => x.id === id);
+  if (c) updateRow(c);
+}
+
+function renderDetail(el, c) {
+  const kv = [['Status', `${LEVEL_TEXT[c.level]}${c.detail ? ' — ' + c.detail : ''}`]];
+  if (c.topic) kv.push(['Topic', `<code>${esc(c.topic)}</code>`, true]);
+  if (c.msg_type) kv.push(['Type', `<code>${esc(c.msg_type)}</code>`, true]);
+  if (c.nodes) kv.push(['Node pattern', c.nodes.map(n => `<code>${esc(n)}</code>`).join(', '), true]);
+  if ('hz' in c && !c.latched) {
+    let rate = `${fmtNum(c.hz)} Hz measured`;
+    if (c.expected_hz) rate += ` · expected ${fmtNum(c.expected_hz)} Hz (warn < ${fmtNum(c.warn_below_hz)}, error < ${fmtNum(c.error_below_hz)})`;
+    kv.push(['Rate', rate]);
+  }
+  if (c.latched) kv.push(['Rate', 'Latched topic (published once), so no rate is expected']);
+  if ('age_s' in c) kv.push(['Last message', `${fmtAge(c.age_s)} · ${(c.received || 0).toLocaleString()} received` + (c.timeout_s ? ` · stale after ${fmtNum(c.timeout_s)} s` : '')]);
+  if (c.publishers != null) kv.push(['Publishers', String(c.publishers)]);
+  if (c.bandwidth) kv.push(['Bandwidth', fmtBytes(c.bandwidth)]);
+  if (c.warn_below_percent != null) kv.push(['Thresholds', `warn < ${c.warn_below_percent}%, error < ${c.error_below_percent}%`]);
+  if (c.warn_above != null) kv.push(['Thresholds', `warn > ${c.warn_above}${unitFor(c)}, error > ${c.error_above}${unitFor(c)}`]);
+  if (c.host) kv.push(['Host', `<code>${esc(c.host)}</code>`, true]);
+  if (c.unit) kv.push(['Service', `<code>${esc(c.unit)}</code>` + (c.user ? ' (user unit)' : ''), true]);
+  if (c.warn_tilt_deg != null || c.error_tilt_deg != null) {
+    kv.push(['Tilt limits', [c.warn_tilt_deg != null && `warn > ${c.warn_tilt_deg}°`, c.error_tilt_deg != null && `error > ${c.error_tilt_deg}°`].filter(Boolean).join(', ')]);
+  }
+  kv.push(['Overall status', c.critical ? 'Errors here make the robot ERROR' : 'Non-critical: errors count as warnings']);
+  if (c.description) kv.push(['About', c.description]);
+  let html = `<dl class="kv">${kv.map(([k, v, raw]) => `<dt>${esc(k)}</dt><dd>${raw ? v : esc(v)}</dd>`).join('')}</dl>`;
+  if (c.items && c.items.length) {
+    html += `<ul class="diag-items">${c.items.map(i => `<li>${ico(i.level, 'sm')}<span><b>${esc(i.name)}</b> ${esc(i.status)}${i.message ? ' — ' + esc(i.message) : ''}</span></li>`).join('')}</ul>`;
+  }
+  const hasSeries = (state.v.get(c.id) || []).some(v => v != null);
+  if (hasSeries) html += `<div class="chart-title">${esc(metricLabel(c))}, last 15 minutes</div><svg class="chart" role="img" aria-label="${esc(c.name)} ${esc(metricLabel(c))}, last 15 minutes"></svg>`;
+  const prevSvg = el.querySelector('svg.chart');
+  const pointer = prevSvg && prevSvg._pointer;
+  el.innerHTML = html;
+  el.onclick = e => e.stopPropagation();
+  const svg = el.querySelector('svg.chart');
+  if (svg) { bindHover(svg); svg._pointer = pointer; drawSeries(svg, c, WINDOW_S, true); }
+}
+
+function renderEvents(snap) {
+  const events = (snap.events || []).slice().reverse();
+  $('#events-empty').hidden = events.length > 0;
+  $('#events').innerHTML = events.map(e => `
+    <tr><td class="time">${esc(fmtTime(e.t))}</td>
+      <td>${esc(e.group)} › ${esc(e.name)}</td>
+      <td><span class="change">${ico(e.from, 'sm')}→${ico(e.to, 'sm')} ${esc(LEVEL_TEXT[e.to])}</span></td>
+      <td>${esc(e.value)}${e.detail ? ' · ' + esc(e.detail) : ''}</td></tr>`).join('');
+}
+
+function renderFooter(snap) {
+  const m = snap.monitor || {};
+  const own = m.cpu != null ? `Monitor overhead: ${fmtNum(m.cpu)}% CPU · ${fmtNum(m.rss_mb)} MB RAM · ` : '';
+  $('#footer').innerHTML = `<span>${esc(own)}${m.subscriptions ?? 0} subscriptions · ${m.checks} checks · up ${esc(fmtDuration(m.uptime_s || 0))}</span>` +
+    `<span>Config <code>${esc(m.config || '')}</code> · updated ${esc(fmtTime(snap.time))}</span>`;
+  $('#graph-note').textContent = `${snap.graph.nodes} nodes · ${snap.graph.topics} topics visible`;
+}
+
+function renderConnection() {
+  const fresh = state.connected && Date.now() - state.lastNewDataAt < 5000;
+  const conn = $('#conn');
+  conn.className = `conn ${fresh ? 'live' : state.snap ? 'lost' : ''}`;
+  $('#conn-text').textContent = fresh ? 'Live' : state.snap ? 'Disconnected' : 'Connecting';
+  const banner = $('#lost-banner');
+  banner.hidden = fresh || !state.snap;
+  if (!fresh && state.snap) banner.textContent = `Lost contact with the health monitor. Showing data from ${fmtTime(state.snap.time)}. ` +
+    'Check that the robot is on, Tailscale is connected and health_monitor is running.';
+  $('#main').classList.toggle('lost', !fresh && !!state.snap);
+}
+
+// ---------- ROS graph explorer ----------
+async function loadGraph() {
+  try { state.graph = await getJSON('api/graph'); renderGraph(); } catch (e) { /* shown as disconnected */ }
+}
+function renderGraph() {
+  const g = state.graph;
+  if (!g) return;
+  const q = $('#graph-search').value.trim().toLowerCase();
+  const unwatched = $('#unwatched').checked;
+  $('#unwatched-label').hidden = state.graphTab !== 'topics';
+  document.querySelectorAll('.tabs button').forEach(b => {
+    b.setAttribute('aria-pressed', b.dataset.tab === state.graphTab);
+    b.textContent = b.dataset.tab === 'topics' ? `Topics (${g.topics.length})` : `Nodes (${g.nodes.length})`;
+  });
+  const table = $('#graph-table');
+  if (state.graphTab === 'nodes') {
+    const rows = g.nodes.filter(n => n.toLowerCase().includes(q));
+    table.innerHTML = `<thead><tr><th>Node</th></tr></thead><tbody>` +
+      rows.map(n => `<tr><td><code>${esc(n)}</code></td></tr>`).join('') + '</tbody>';
+    return;
+  }
+  const rows = g.topics.filter(t => t.name.toLowerCase().includes(q) && (!unwatched || !t.monitored));
+  table.innerHTML = `<thead><tr><th>Topic</th><th>Type</th><th class="num">Pub</th><th class="num">Sub</th><th>Watched</th></tr></thead><tbody>` +
+    rows.slice(0, 600).map(t => `<tr><td><code>${esc(t.name)}</code></td><td><code>${esc(t.type)}</code></td>` +
+      `<td class="num">${t.publishers}</td><td class="num">${t.subscribers}</td><td>${t.monitored ? '✓ yes' : ''}</td></tr>`).join('') + '</tbody>';
+}
+$('#graph').addEventListener('toggle', e => { if (e.target.open) loadGraph(); });
+setInterval(() => { if ($('#graph').open) loadGraph(); }, 10000);
+document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => { state.graphTab = b.dataset.tab; renderGraph(); }));
+$('#graph-search').addEventListener('input', renderGraph);
+$('#unwatched').addEventListener('change', renderGraph);
+
+// ---------- wiring ----------
+$('#issues').addEventListener('click', e => {
+  const li = e.target.closest('li[data-id]');
+  if (!li) return;
+  const refs = state.rows.get(li.dataset.id);
+  if (!refs) return;
+  if (!state.expanded.has(li.dataset.id)) toggleRow(li.dataset.id);
+  refs.row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  refs.row.focus({ preventScroll: true });
+});
+$('#theme').addEventListener('click', () => {
+  const dark = getComputedStyle(document.documentElement).colorScheme.includes('dark');
+  const next = dark ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  save('hh-theme', next);
+  render();
+});
+function renderThemeButton() {
+  const dark = getComputedStyle(document.documentElement).colorScheme.includes('dark');
+  $('#theme').textContent = dark ? 'Light mode' : 'Dark mode';
+}
+window.addEventListener('resize', () => render());
+
+async function poll() {
+  try {
+    const snap = await getJSON('api/health');
+    state.connected = true;
+    if (snap && snap.groups) { ingest(snap); state.snap = snap; render(); }
+  } catch (e) {
+    state.connected = false;
+  }
+  renderConnection();
+  setTimeout(poll, POLL_MS);
+}
+
+(async () => {
+  try { seed(await getJSON('api/history?seconds=' + WINDOW_S)); } catch (e) { /* first poll will report */ }
+  poll();
+})();
+</script>
+</body>
+</html>
