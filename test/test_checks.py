@@ -352,3 +352,18 @@ def test_probe_never_fakes_installed_units(monkeypatch):
     monkeypatch.setenv(probes.SIMULATE_ENV, '1')
     props, _ = probes.systemd_state('tailscaled.service')
     assert props['ActiveState'] == 'inactive'
+
+
+def test_systemd_status_ok_reads_tailscale_state():
+    check = make({'name': 'Tailscale', 'type': 'systemd', 'unit': 'tailscaled',
+                  'status_ok': ['Connected'], 'missing_level': 'warn'})
+    running = {**SYSTEMD, 'ActiveState': 'active', 'SubState': 'running'}
+    check.record({**running, 'StatusText': 'Connected; user@; 100.64.0.10 fd7a::1'})
+    result = check.evaluate(Context(now=1))
+    assert (result.level, result.value) == (OK, 'CONNECTED')
+    assert '100.64.0.10' in result.detail
+    check.record({**running, 'StatusText': "Stopped; run 'tailscale up' to log in"})
+    result = check.evaluate(Context(now=2))
+    assert (result.level, result.value) == (WARN, 'STOPPED')
+    check.record({**running, 'StatusText': ''})
+    assert check.evaluate(Context(now=3)).value == 'ACTIVE'

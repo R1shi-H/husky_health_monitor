@@ -1,9 +1,9 @@
 # husky_health_monitor
 
 At-a-glance health for the Husky A300 (`a300_00095`) and the MORS Code software.
-One ROS 2 node runs onboard, checks the platform, sensors, operator controls,
-network, navigation, MORS services (ROS topics and systemd units) and the computer
-itself, and reports each as
+One ROS 2 node runs onboard and checks power and safety, the drive system,
+positioning, perception, operator control, the MORS mission services (ROS topics and
+systemd units), the network, ROS itself and the onboard computer. It reports each as
 **Healthy / Warning / Error** in three places:
 
 - a **web dashboard** at `http://<robot>:8088`, viewable over Tailscale
@@ -88,7 +88,7 @@ this repo. Get the real values from the setup notes:
 
    Copy the suggested values into `config/a300_00095.yaml` and rebuild (or pass your
    own file with `config:=`). The GPS navigation service is still a commented-out
-   placeholder in **MORS Services**; fill in its unit name once it exists.
+   placeholder in **Mission Services**; fill in its unit name once it exists.
 
 `health_status` exit codes: 0 healthy, 1 warning, 2 error, 3 monitor unreachable.
 That makes it usable from scripts, e.g. a pre-mission check.
@@ -142,9 +142,10 @@ Unit tests for the check logic need no ROS graph: `python3 -m pytest test`.
 ## Configuring checks
 
 Each group in the YAML becomes a card on the dashboard and a section in the terminal
-readout. Topic and node names are relative to `robot_namespace` unless they start
-with `/`. Node patterns may use `*`; a pattern starting with `*` matches in any
-namespace.
+readout, in the order they're listed; the dashboard packs the cards into balanced
+columns. A group made only of `system` checks is shown as the tiles at the top. Topic
+and node names are relative to `robot_namespace` unless they start with `/`. Node
+patterns may use `*`; a pattern starting with `*` matches in any namespace.
 
 | `type` | What it checks | Key options |
 |---|---|---|
@@ -161,7 +162,7 @@ namespace.
 | `system` | CPU, memory, disk or temperature of the onboard computer | `metric`, `warn_above`, `error_above`, `path` |
 | `interface` | A network interface is up with an IPv4 address | `interface` (e.g. `tailscale0`) |
 | `ping` | A host answers ping (e.g. 1.1.1.1 for internet, or the ground station) | `host`, `warn_ms`, `period_s` |
-| `systemd` | A systemd service is active (`mors@*.service`, `tailscaled`) | `unit`, `user` (a `--user` unit), `period_s` |
+| `systemd` | A systemd service is active (`mors@*.service`, `tailscaled`) | `unit`, `user` (a `--user` unit), `period_s`, `status_ok` (status-text prefixes that mean healthy, e.g. `[Connected]` for Tailscale) |
 
 Options every check accepts:
 

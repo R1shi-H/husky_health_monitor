@@ -723,6 +723,9 @@ class SystemdCheck(Check):
         self.unit = unit if '.' in unit else unit + '.service'
         self.user = bool(spec.get('user', False))
         self.period_s = float(spec.get('period_s', 5.0))
+        # StatusText prefixes that mean healthy, for services (like tailscaled) that can be
+        # running without working; the first part of the status becomes the shown value
+        self.status_ok = spec.get('status_ok')
         self.props = None
         self.error = None
         self.attempts = 0
@@ -741,6 +744,13 @@ class SystemdCheck(Check):
         status = props.get('StatusText', '')
         if props.get('LoadState') == 'not-found':
             return self.missing('NOT FOUND', f'no unit named {self.unit} on this computer')
+        if active == 'active' and self.status_ok and status:
+            # e.g. 'Connected; user@example.com; 100.64.0.10 fd7a::1' -> CONNECTED
+            state, _, rest = status.partition(';')
+            value = state.strip().rstrip('.').upper()[:24]
+            if status.startswith(tuple(self.status_ok)):
+                return Result(OK, self.ok_label or value, _join(_since(props), rest.strip()))
+            return Result(WARN, value, f'{self.unit} is running but reports: {status}')
         if active == 'active':
             return Result(OK, self.ok_label or 'ACTIVE', _join(sub, _since(props), status))
         if active in ('activating', 'reloading', 'deactivating'):
@@ -752,7 +762,8 @@ class SystemdCheck(Check):
                                   status))
 
     def describe(self):
-        return {**super().describe(), 'unit': self.unit, 'user': self.user}
+        return {**super().describe(), 'unit': self.unit, 'user': self.user,
+                'status_ok': self.status_ok}
 
 
 def _since(props):

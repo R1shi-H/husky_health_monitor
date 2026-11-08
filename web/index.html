@@ -143,7 +143,9 @@
   .tile svg { display: block; width: 100%; height: 36px; margin-top: auto; }
 
   /* group cards */
-  .groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; align-items: start; margin-bottom: 16px; }
+  /* cards are dealt into columns by height (see renderGroups), so short cards leave no holes */
+  .groups { display: grid; grid-template-columns: repeat(var(--cols, 1), minmax(0, 1fr)); gap: 16px; align-items: start; margin-bottom: 16px; }
+  .group-col { display: grid; gap: 16px; align-content: start; min-width: 0; }
   .group { padding: 12px 8px 8px; }
   .group-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px 8px; }
   .group-sum { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
@@ -153,7 +155,9 @@
   .row.warn { background: var(--tint-warn); }
   .row.error { background: var(--tint-error); }
   .row .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .row .value { text-align: right; font-weight: 550; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .row .value { text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .row.warn .value, .row.error .value { color: var(--ink); font-weight: 650; }
+  .row.idle .name, .row.waiting .name { color: var(--ink-2); }
   .row .reason { grid-column: 2 / -1; font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
   .row svg.spark { display: block; width: 76px; height: 22px; }
   .detail { margin: 2px 8px 8px 36px; padding: 10px 0 4px; border-top: 1px solid var(--grid); }
@@ -193,7 +197,6 @@
 
   @media (max-width: 760px) {
     .overall { grid-template-columns: 1fr; }
-    .groups { grid-template-columns: 1fr; }
     .tiles.with-hero { grid-template-columns: 1fr; }
     .tile.hero .tile-value { font-size: 40px; }
   }
@@ -424,7 +427,10 @@ function linePaths(ts, vs, xOf, yOf, base) {
 }
 
 // Draws a single-series line chart into svg; axes=true adds y labels and an expected-rate line.
-function drawSeries(svg, check, spanS, axes) {
+// Kinds whose value has a trend worth a row sparkline (on/off and running/stopped rows get none)
+const SPARK_KINDS = new Set(['rate', 'navsat', 'battery', 'orientation', 'ping', 'field', 'system']);
+
+function drawSeries(svg, check, spanS, axes, wash = true) {
   const w = Math.max(40, Math.round(svg.getBoundingClientRect().width)) || 76;
   const h = Math.round(svg.getBoundingClientRect().height) || 22;
   const arr = state.v.get(check.id) || [];
@@ -453,8 +459,8 @@ function drawSeries(svg, check, spanS, axes) {
   }
   svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
   svg.innerHTML = extra +
-    `<path d="${area}" fill="var(--series-wash)"/>` +
-    `<path d="${line}" fill="none" stroke="var(--series)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>` +
+    (wash ? `<path d="${area}" fill="var(--series-wash)"/>` : '') +
+    `<path d="${line}" fill="none" stroke="var(--series)" stroke-width="${wash ? 2 : 1.5}" stroke-linejoin="round" stroke-linecap="round"/>` +
     `<g class="hover" visibility="hidden"><line y1="${padT}" y2="${base}" stroke="var(--axis)" stroke-width="1"/>` +
     `<circle r="4" fill="var(--series)" stroke="var(--surface)" stroke-width="2"/></g>`;
   svg._model = { ts, vs, xOf, yOf, w, fmt: v => `${fmtNum(v)}${unit}` };
@@ -630,28 +636,40 @@ function subFor(c, snap) {
 function renderGroups(snap) {
   const box = $('#groups');
   const groups = snap.groups.filter(g => !isTileGroup(g));
-  const key = groups.map(g => g.name + ':' + g.checks.map(c => c.id).join(',')).join('|');
+  const cols = Math.max(1, Math.min(groups.length, Math.floor((box.clientWidth + 16) / (400 + 16))));
+  const key = cols + '#' + groups.map(g => g.name + ':' + g.checks.map(c => c.id).join(',')).join('|');
   if (state.layoutKey !== key) {
     state.layoutKey = key;
     state.rows.clear();
-    box.innerHTML = groups.map(g => `
+    // Deal cards in config order into whichever column is shortest (by row count), so the
+    // layout stays balanced and doesn't shift when a row is expanded
+    const columns = Array.from({ length: cols }, () => ({ height: 0, groups: [] }));
+    for (const g of groups) {
+      const col = columns.reduce((a, b) => (b.height < a.height ? b : a));
+      col.groups.push(g);
+      col.height += g.checks.length + 2;
+    }
+    const card = g => `
       <article class="card group" data-group="${esc(g.name)}">
         <header class="group-head"><h2>${esc(g.name)}</h2><span class="group-sum"></span></header>
         <div class="rows">${g.checks.map(c => `
           <div class="row" data-id="${esc(c.id)}" role="button" tabindex="0" aria-expanded="false">
             <span class="ico-slot"></span><span class="name">${esc(c.name)}</span><span class="value"></span>
-            <svg class="spark" role="img" aria-label="${esc(c.name)}, last 5 minutes"></svg>
+            ${SPARK_KINDS.has(c.kind) ? `<svg class="spark" role="img" aria-label="${esc(c.name)}, last 5 minutes"></svg>` : '<span></span>'}
             <span class="reason" hidden></span>
           </div>
           <div class="detail" hidden></div>`).join('')}
         </div>
-      </article>`).join('');
+      </article>`;
+    box.style.setProperty('--cols', cols);
+    box.innerHTML = columns.map(col => `<div class="group-col">${col.groups.map(card).join('')}</div>`).join('');
     for (const row of box.querySelectorAll('.row')) {
       const id = row.dataset.id;
       state.rows.set(id, { row, detail: row.nextElementSibling });
       row.addEventListener('click', () => toggleRow(id));
       row.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleRow(id); } });
-      bindHover(row.querySelector('svg'));
+      const spark = row.querySelector('svg.spark');
+      if (spark) bindHover(spark);
     }
   }
   for (const g of groups) {
@@ -678,7 +696,8 @@ function updateRow(c) {
   const reason = row.querySelector('.reason');
   reason.hidden = !c.detail || !(RANK[c.level] >= RANK.warn || c.show_detail);
   reason.textContent = c.detail || '';
-  drawSeries(row.querySelector('svg'), c, SPARK_S, false);
+  const spark = row.querySelector('svg.spark');
+  if (spark) drawSeries(spark, c, SPARK_S, false, false);
   const open = state.expanded.has(c.id);
   row.setAttribute('aria-expanded', open);
   detail.hidden = !open;
@@ -732,6 +751,7 @@ function renderDetail(el, c) {
 function renderEvents(snap) {
   const events = (snap.events || []).slice().reverse();
   $('#events-empty').hidden = events.length > 0;
+  $('#events').closest('table').hidden = events.length === 0;
   $('#events').innerHTML = events.map(e => `
     <tr><td class="time">${esc(fmtTime(e.t))}</td>
       <td>${esc(e.group)} › ${esc(e.name)}</td>

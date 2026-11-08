@@ -113,7 +113,9 @@ def main(argv=None):
                 snap = fetch(args.url)
             except (urllib.error.URLError, OSError, ValueError) as exc:
                 reason = getattr(exc, 'reason', exc)
-                output = f'Cannot reach the health monitor at {args.url} ({reason}).'
+                output = (f'Cannot reach the health monitor at {args.url} ({reason}).\n'
+                          'Is it running? Start it on this computer with run_local_test.sh, or '
+                          'point --url at the robot: --url http://<husky-tailscale-ip>:8088')
                 code = 3
             else:
                 code = EXIT_CODES[snap['overall']['level']]

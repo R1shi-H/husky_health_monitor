@@ -28,24 +28,10 @@ history:
   keep_days: 7
 
 groups:
-  - name: ROS 2
-    checks:
-      - name: ROS graph
-        type: ros_graph
-        min_nodes: 5
-        description: Catches DDS / discovery server problems (wrong domain, missing super client).
-      - name: Clearpath diagnostics
-        type: diagnostics
-        topic: diagnostics_agg
-        expected_hz: 1
-        critical: false
-        description: Clearpath's own diagnostic aggregator, reduced to its worst entries.
-      - name: TF
-        type: rate
-        topic: tf
-        expected_hz: 10
+  # Groups are ordered by how much the operator cares: can it drive safely, does it know
+  # where it is, can it see, can we control it, is the mission software up, can we reach it.
 
-  - name: Platform
+  - name: Power & Safety
     checks:
       - name: Battery
         type: battery
@@ -69,6 +55,9 @@ groups:
         true_label: ACTIVE
         false_label: CLEAR
         bad_level: warn
+
+  - name: Drive System
+    checks:
       - name: MCU
         type: rate
         topic: platform/mcu/status
@@ -89,7 +78,7 @@ groups:
         type: node
         node: controller_manager
 
-  - name: Sensors
+  - name: Positioning
     checks:
       # Orientation from the Fixposition INS (localization/odom carries it too)
       - name: IMU orientation
@@ -117,6 +106,19 @@ groups:
         type: rate
         topic: sensors/imu_0/data
         expected_hz: 100
+      - name: Localization
+        type: rate
+        topic: localization/odom
+        expected_hz: 5
+        critical: false
+      - name: Localization GPS
+        type: navsat
+        topic: localization/fix
+        timeout_s: 5
+        critical: false
+
+  - name: Perception
+    checks:
       - name: 2D lidar
         type: rate
         topic: sensors/lidar2d_0/scan_filtered
@@ -169,6 +171,10 @@ groups:
         idle_ok: true
         ok_label: CONNECTED
         idle_label: NOT CONNECTED
+      # MORS Code services run as systemd units (mors@<name>.service)
+      - name: Velocity mux
+        type: systemd
+        unit: mors@velocity_mux.service
       - name: Teleop nodes
         type: node
         node: joy_teleop/*
@@ -186,57 +192,8 @@ groups:
         ok_label: ACTIVE
         timeout_s: 1
 
-  - name: Network
+  - name: Mission Services
     checks:
-      - name: Tailscale
-        type: systemd
-        unit: tailscaled.service
-        missing_level: warn
-        show_detail: true       # tailscaled's status line: connection, account, IPs
-      - name: Internet
-        type: ping
-        host: 1.1.1.1
-        warn_ms: 250
-        missing_level: warn
-      - name: Wi-Fi
-        type: bool
-        topic: platform/wifi_connected
-        ok_value: true
-        true_label: CONNECTED
-        false_label: DISCONNECTED
-        bad_level: warn
-        critical: false
-      # Uncomment once you know the ground station's address (Doodle Labs or Tailscale IP)
-      # - name: Ground station link
-      #   type: ping
-      #   host: <ground-station-ip>
-      #   warn_ms: 250
-      #   missing_level: warn
-
-  - name: Navigation
-    checks:
-      - name: Localization
-        type: rate
-        topic: localization/odom
-        expected_hz: 5
-        critical: false
-      - name: Localization GPS
-        type: navsat
-        topic: localization/fix
-        timeout_s: 5
-        critical: false
-      - name: Autonomy
-        type: topic
-        topic: autonomy/status
-        min_publishers: 1
-        critical: false
-
-  # MORS Code services run as systemd units (mors@<name>.service)
-  - name: MORS Services
-    checks:
-      - name: Velocity mux
-        type: systemd
-        unit: mors@velocity_mux.service
       - name: Camera streams
         type: systemd
         unit: mors@camera_streams.service
@@ -258,6 +215,55 @@ groups:
         idle_ok: true
         idle_label: NOT RUNNING
         critical: false
+      - name: Autonomy
+        type: topic
+        topic: autonomy/status
+        min_publishers: 1
+        critical: false
+
+  - name: Network
+    checks:
+      - name: Tailscale
+        type: systemd
+        unit: tailscaled.service
+        status_ok: [Connected]  # tailscaled can be running but logged out or stopped
+        missing_level: warn
+      - name: Internet
+        type: ping
+        host: 1.1.1.1
+        warn_ms: 250
+        missing_level: warn
+      - name: Wi-Fi
+        type: bool
+        topic: platform/wifi_connected
+        ok_value: true
+        true_label: CONNECTED
+        false_label: DISCONNECTED
+        bad_level: warn
+        critical: false
+      # Uncomment once you know the ground station's address (Doodle Labs or Tailscale IP)
+      # - name: Ground station link
+      #   type: ping
+      #   host: <ground-station-ip>
+      #   warn_ms: 250
+      #   missing_level: warn
+
+  - name: ROS & Diagnostics
+    checks:
+      - name: ROS graph
+        type: ros_graph
+        min_nodes: 5
+        description: Catches DDS / discovery server problems (wrong domain, missing super client).
+      - name: Clearpath diagnostics
+        type: diagnostics
+        topic: diagnostics_agg
+        expected_hz: 1
+        critical: false
+        description: Clearpath's own diagnostic aggregator, reduced to its worst entries.
+      - name: TF
+        type: rate
+        topic: tf
+        expected_hz: 10
 
   # System checks are shown as tiles at the top of the dashboard
   - name: Computer
