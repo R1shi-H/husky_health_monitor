@@ -131,12 +131,12 @@ groups:
       - name: Front camera (OAK-D)
         type: rate
         topic: oak_d_pro_w_front/image_color/compressed
-        expected_hz: 15
+        expected_hz: 12        # measured 12-16 Hz
         critical: false
       - name: Rear camera (OAK-D)
         type: rate
         topic: oak_d_pro_w_rear/image_color/compressed
-        expected_hz: 15
+        expected_hz: 12        # measured 12-16 Hz
         critical: false
       # sensors/camera_2/image_raw_throttle/compressed or camera_info would be lighter to watch
       - name: PTZ camera (Axis)
