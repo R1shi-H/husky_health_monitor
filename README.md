@@ -181,7 +181,9 @@ message has arrived for `timeout_s` (default: three periods, at least 2 s). A ch
 dropped below a threshold only recovers once the rate is 10% above it again, so a topic
 hovering at the threshold doesn't flip back and forth. Topics
 that are only published on change (e-stop, Wi-Fi) have no `expected_hz`, so they are
-never marked stale. Latched (transient-local) topics are detected automatically.
+never marked stale. Topics published once and kept (latched, like `robot_description`)
+are detected automatically; a transient-local topic that keeps streaming, like
+`platform/odom`, is still rate-checked.
 
 Example: watching the MCU temperature once you know its field name (check with
 `ros2 topic echo --once /a300_00095/platform/mcu/status/temperature`):

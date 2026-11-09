@@ -163,7 +163,7 @@ class HealthMonitor(Node):
             LATCHED_QOS if latched else STREAM_QOS, raw=raw)
         for check in checks:
             check.msg_type = type_name
-            check.latched = latched
+            check.transient_local = latched
             check.type_error = None
 
     def _is_latched(self, topic):

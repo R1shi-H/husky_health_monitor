@@ -110,7 +110,7 @@ def test_idle_topic():
 
 def test_latched_topic_never_stale():
     check = make({'name': 'Desc', 'topic': 'robot_description', 'timeout_s': 1})
-    check.latched = True
+    check.transient_local = True
     check.on_message(0.0)
     assert check.evaluate(Context(now=100.0)).level == OK
 
@@ -391,3 +391,15 @@ def test_orientation_identity_means_not_initialized():
     assert (result.level, result.value) == (WARN, 'NOT INITIALIZED')
     check.on_message(0.2, odometry(0.0, 0.0, 0.01))
     assert check.evaluate(Context(now=0.3)).level == OK
+
+
+def test_transient_local_stream_is_still_rate_checked():
+    # platform/odom on the A300 streams at 50 Hz with transient-local QoS
+    check = make({'name': 'Odom', 'topic': 'platform/odom', 'expected_hz': 50})
+    check.transient_local = True
+    last = feed(check, 50, 6)
+    assert not check.latched
+    result = check.evaluate(Context(now=last + 0.01))
+    assert (result.level, result.value) == (OK, '50 Hz')
+    stale = check.evaluate(Context(now=last + 5))
+    assert stale.value == 'STALE'

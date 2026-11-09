@@ -24,6 +24,7 @@ from geometry_msgs.msg import TransformStamped, TwistStamped
 from nav_msgs.msg import Odometry
 from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import (BatteryState, CompressedImage, Imu, JointState, Joy, LaserScan,
                              NavSatFix, NavSatStatus, PointCloud2, PointField)
 from std_msgs.msg import Bool, Header
@@ -54,7 +55,10 @@ class MockHusky(Node):
         self.stream('platform/wifi_connected', Bool, 1, lambda: Bool(data=True))
         self.stream('platform/mcu/status', Header, 1, self.header)
         self.stream('platform/motors/feedback', Header, 50, self.header)
-        self.stream('platform/odom', Odometry, 50, Odometry)
+        # The real platform/odom streams with transient-local QoS, so the mock does too
+        self.stream('platform/odom', Odometry, 50, Odometry, qos=QoSProfile(
+            depth=1, reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.stream('platform/joint_states', JointState, 50, self.joints)
         self.stream('diagnostics_agg', DiagnosticArray, 1, self.diagnostics)
         self.stream('tf', TFMessage, 50, self.tf)
@@ -87,8 +91,8 @@ class MockHusky(Node):
         self.create_publisher(Header, 'autonomy/status', 1)  # advertised, nothing published
         self.stream('object_tracking/enabled', Bool, 1, lambda: Bool(data=True))
 
-    def stream(self, topic, msg_type, hz, make, when=None):
-        pub = self.create_publisher(msg_type, topic, 10)
+    def stream(self, topic, msg_type, hz, make, when=None, qos=10):
+        pub = self.create_publisher(msg_type, topic, qos)
 
         def tick():
             if when is None or when():

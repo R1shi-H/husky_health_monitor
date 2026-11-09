@@ -210,9 +210,16 @@ class TopicCheck(Check):
         self.idle_label = spec.get('idle_label', 'IDLE')
         self.tracker = RateTracker(_float(spec.get('window_s', max(5.0, 3.0 / hz) if hz else 10.0)))
         self.last_msg = None
-        self.latched = False
+        self.transient_local = False  # publishers keep history for late joiners
         self.type_error = None
         self._rate_state = OK
+
+    @property
+    def latched(self):
+        """Published once and kept (e.g. robot_description), so no rate or staleness applies.
+        Transient-local QoS alone isn't enough: some drivers (platform/odom on the A300)
+        stream continuously with it, and those must still be rate-checked."""
+        return self.transient_local and self.tracker.total < 3
 
     def on_message(self, now, msg=None, nbytes=0):
         self.tracker.tick(now, nbytes)

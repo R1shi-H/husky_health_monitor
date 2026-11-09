@@ -119,11 +119,17 @@ groups:
         type: rate
         topic: sensors/lidar2d_0/scan_filtered
         expected_hz: 10
-      # The voxel-filtered cloud is the smallest 3D lidar topic, which keeps the monitor cheap
+      # The voxel-filtered cloud is the smallest 3D lidar topic, which keeps the monitor cheap.
+      # On the robot it arrives unevenly (1.5-4 Hz, gaps up to 1.1 s; confirmed with
+      # ros2 topic hz), so it's averaged over 15 s and only a sustained drop alerts.
       - name: 3D lidar
         type: rate
         topic: sensors/lidar3d_0/pointcloud_voxel
-        expected_hz: 4
+        expected_hz: 3
+        window_s: 15
+        warn_below_hz: 2.0
+        error_below_hz: 1.0
+        timeout_s: 3
       - name: Front camera (OAK-D)
         type: rate
         topic: oak_d_pro_w_front/image_color/compressed
