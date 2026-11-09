@@ -16,23 +16,35 @@ lines of config, not code.
 
 ```
 HUSKY A300 SYSTEM HEALTH
-a300_00095 on cpr-a300-00095 at 14:02:11
+a300_00095 on cpr-a300-00095 at 16:32:58
 ============================================================
-PLATFORM                        STATUS
+POWER & SAFETY                  STATUS
 ------------------------------------------------------------
-Battery                         ✓ 78%
-Emergency stop                  ✓ RELEASED
+Battery                         ✓ 52%
+  └ charging · 26.1 V · +3.6 A
+Emergency stop                  ⚠ ENGAGED
+  └ robot cannot drive until the e-stop is released
+
+DRIVE SYSTEM                    STATUS
+------------------------------------------------------------
+MCU                             ✓ 1.0 Hz
 Motor drivers                   ✓ 50 Hz
+Wheel odometry                  ✓ 50 Hz
 ...
-SENSORS                         STATUS
+POSITIONING                     STATUS
 ------------------------------------------------------------
-GPS 0                           ✓ 5.0 Hz · RTK
-GPS 1                           ✗ STALE
-  └ last message 4.2 s ago
+IMU orientation                 ⚠ NOT INITIALIZED
+  └ orientation is exactly 0° on every axis; the INS has likely not initialized
+GPS 0                           ⚠ 5.0 Hz · NO FIX
 ...
 ============================================================
 OVERALL SYSTEM STATUS:          ✗ ERROR
 ```
+
+The dashboard groups the same checks into cards: Power & Safety, Drive System,
+Positioning, Perception, Operator Control, Mission Services, Network, and
+ROS & Diagnostics, with the onboard computer's CPU, memory, disk and temperature as
+tiles at the top.
 
 ## Run it on the Husky
 
@@ -41,22 +53,28 @@ this repo. Get the real values from the setup notes:
 `<husky-tailscale-ip>` (also shown by `tailscale status` as `cpr-a300-00095`),
 `<husky-ip>` (the robot's onboard network address) and `<robot-user>` (its login).
 
-1. Copy the package to the robot and build it:
+1. Log in to the robot, clone the repo into its own workspace and build it:
 
    ```bash
-   scp -r husky_health_monitor <robot-user>@<husky-tailscale-ip>:~/health_ws/src/
    ssh <robot-user>@<husky-tailscale-ip>
+   mkdir -p ~/health_ws/src && cd ~/health_ws/src
+   git clone https://github.com/R1shi-H/husky_health_monitor.git
    cd ~/health_ws && source /opt/ros/jazzy/setup.bash
    colcon build --packages-select husky_health_monitor
    source install/setup.bash
    ```
 
-2. Use the same ROS environment as the robot's own terminals, **plus super client
-   mode**. Without it the discovery server only tells the monitor about some of the
-   graph, and node and topic checks report things as missing.
+   To update later, run `git pull` in `~/health_ws/src/husky_health_monitor`, then the
+   same `colcon build` and `source` lines. If the robot has no internet, copy the
+   package from a laptop with `scp -r` instead. Keep it in its own workspace rather
+   than the team's `mors_ws`, so building or updating it never touches their code.
+
+2. Turn on **super client mode**. Without it the discovery server only tells the
+   monitor about part of the graph, and node and topic checks report things as missing.
+   The robot's shell already points at its discovery server (`echo $ROS_DISCOVERY_SERVER`
+   shows `127.0.0.1:11811;` on a300_00095); only set it if that's empty.
 
    ```bash
-   export ROS_DISCOVERY_SERVER=<husky-ip>:11811
    export ROS_SUPER_CLIENT=True
    ros2 daemon stop; ros2 daemon start
    ros2 node list        # should show the Husky's nodes before you go on
@@ -70,6 +88,12 @@ this repo. Get the real values from the setup notes:
 
    Launch arguments: `namespace:=a300_00095`, `config:=/path/to/your.yaml`, `web_port:=8088`.
 
+   The monitor stops when that terminal closes, so keep it open (or see
+   [Start at boot](#start-at-boot-optional)). The dashboard footer shows which config
+   file is in use; it should start with `/home/<robot-user>/health_ws/`. If it shows
+   another workspace, that copy is the one running: source
+   `~/health_ws/install/setup.bash` last and relaunch.
+
 4. View it:
    - Browser, from any machine on Tailscale: `http://<husky-tailscale-ip>:8088`
    - Terminal on the robot: `ros2 run husky_health_monitor health_status --watch`
@@ -79,8 +103,9 @@ this repo. Get the real values from the setup notes:
    If the page doesn't load over Tailscale, tunnel it through SSH instead:
    `ssh -L 8088:localhost:8088 <robot-user>@<husky-tailscale-ip>`, then open `http://localhost:8088`.
 
-5. Tune the rates. The shipped `expected_hz` values are conservative guesses. With
-   the robot running normally, compare them with what's measured:
+5. Re-check the rates now and then. The `expected_hz` values in the config were
+   measured on a300_00095 on 2026-11-09, with the robot e-stopped and charging. Rates
+   can change while it's driving, so compare them with what's measured then:
 
    ```bash
    ros2 run husky_health_monitor health_status --calibrate
@@ -92,6 +117,23 @@ this repo. Get the real values from the setup notes:
 
 `health_status` exit codes: 0 healthy, 1 warning, 2 error, 3 monitor unreachable.
 That makes it usable from scripts, e.g. a pre-mission check.
+
+## Notes from testing on a300_00095
+
+Things the config accounts for, found on the real robot on 2026-11-09:
+
+- `platform/odom_filtered` (EKF) has no publisher, so Wheel odometry watches
+  `platform/odom`. That topic uses transient-local QoS but streams at 50 Hz.
+- `platform/safety_stop` is an input the platform listens on (0 publishers), not a
+  status, so it isn't checked; Emergency stop covers stop state.
+- The 3D lidar's voxel-filtered cloud arrives unevenly (about 1.5-4 Hz, gaps up to
+  1.1 s; `ros2 topic hz` agrees), so that check averages over 15 s.
+- With no GNSS fix, the Fixposition INS reports exactly 0° roll, pitch and yaw, which
+  the dashboard shows as NOT INITIALIZED.
+- `sensors/lidar2d_0/scan_filtered` had no publisher: the 2D lidar driver wasn't
+  running.
+- The joystick nodes are `joy_node` and `teleop_twist_joy_node` in the robot namespace,
+  plus one set per controller under `operators/<name>/`.
 
 ## Develop without the robot
 
@@ -138,6 +180,9 @@ HUSKY_HEALTH_FAILED_SERVICES=mors@atak_bridge.service ros2 launch husky_health_m
 ```
 
 Unit tests for the check logic need no ROS graph: `python3 -m pytest test`.
+
+In VS Code, open the package folder; **Terminal → Run Task** has Build, Run with fake
+robot, Terminal view and Unit tests.
 
 ## Configuring checks
 
@@ -215,6 +260,8 @@ The monitor must not affect normal Husky operation, so:
   than the default executor. In testing against the mock (about 560 messages/s across
   24 topics), the monitor used about 5% of one CPU core and 83 MB of RAM; with the
   default executor it used 26%. Set `executor: single` in the config to switch back.
+  On a300_00095 (about 100 nodes and 350 topics) it uses 5-7% of one CPU core and
+  about 115 MB of RAM.
 - Graph queries run every 3 s and checks are evaluated at 1 Hz. The dashboard footer
   shows the monitor's own CPU and memory use.
 
@@ -226,8 +273,11 @@ The monitor must not affect normal Husky operation, so:
 | `husky_health_monitor/checks.py` | Check types and evaluation logic (no ROS dependency) |
 | `husky_health_monitor/monitor_node.py` | The node: subscriptions, graph discovery, publishing |
 | `husky_health_monitor/web_server.py`, `web/index.html` | Dashboard server and page (no internet needed) |
+| `husky_health_monitor/probes.py` | `systemctl` and ping, run on a background thread |
 | `husky_health_monitor/cli.py` | Terminal readout and `--calibrate` |
 | `husky_health_monitor/mock_husky.py` | Fake robot for development |
+| `run_local_test.sh`, `local_test_env.sh` | Run the fake robot and monitor locally, cut off from the real robot |
+| `.vscode/` | Editor settings and tasks |
 | `~/.ros/husky_health/health-YYYY-MM-DD.jsonl` | History log: every status change, plus a snapshot every 10 s; 7 days kept |
 
 The dashboard's JSON API (`/api/health`, `/api/history?seconds=900`, `/api/graph`) is
@@ -244,7 +294,7 @@ Description=Husky health monitor
 After=network-online.target
 
 [Service]
-Environment=ROS_DISCOVERY_SERVER=<husky-ip>:11811
+Environment=ROS_DISCOVERY_SERVER=127.0.0.1:11811;
 Environment=ROS_SUPER_CLIENT=True
 ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source %h/health_ws/install/setup.bash && exec ros2 launch husky_health_monitor health_monitor.launch.py'
 Restart=on-failure
@@ -253,7 +303,8 @@ Restart=on-failure
 WantedBy=default.target
 ```
 
-Then run `systemctl --user enable --now husky-health` and
+Set `ROS_DISCOVERY_SERVER` to whatever `echo $ROS_DISCOVERY_SERVER` shows in a robot
+shell. Then run `systemctl --user enable --now husky-health` and
 `loginctl enable-linger <robot-user>`. Check with the team before adding services to the robot.
 
 ## Troubleshooting
@@ -266,5 +317,7 @@ Then run `systemctl --user enable --now husky-health` and
 | Service `NOT FOUND` | The monitor isn't running on the robot, or the unit name is wrong; check `systemctl list-units 'mors@*'` |
 | A connected controller shows `NOT CONNECTED` | Its joy node only publishes on input; raise `timeout_s` or set the joy node's `autorepeat_rate` |
 | Node or topic check `NOT RUNNING` | The name doesn't match; check `ros2 node list` / `ros2 topic list` |
-| Rate checks flicker between OK and WARNING | `expected_hz` is too close to the real rate; use `--calibrate` |
-| Dashboard unreachable | Port 8088 blocked or Tailscale down; use the SSH tunnel above |
+| Rate checks flicker between OK and WARNING | `expected_hz` is too close to the real rate; use `--calibrate`. For a topic that's naturally uneven, add `window_s` to average over longer |
+| `could not start the dashboard ... Address already in use` | Another monitor is already running. Find it with `ps -eo pid,lstart,args \| grep "[h]ealth_monitor"`, stop it if it's yours, then relaunch |
+| Dashboard shows an old version | The browser is showing the other monitor (see the row above), or another workspace's copy is running; check the config path in the footer |
+| Dashboard unreachable | The monitor isn't running, port 8088 is blocked or Tailscale is down; use the SSH tunnel above |
