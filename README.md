@@ -153,7 +153,7 @@ patterns may use `*`; a pattern starting with `*` matches in any namespace.
 | `battery` | `sensor_msgs/BatteryState` charge | `warn_below_percent` (30), `error_below_percent` (15), `percentage_scale` |
 | `navsat` | `sensor_msgs/NavSatFix` rate and fix type (-1 NO FIX, 0 GNSS FIX, 1 RTK FLOAT, 2 RTK FIXED) | `expected_hz`, `no_fix_level`, `min_status` (2 = require RTK FIXED), `fix_labels` |
 | `bool` | A boolean field, e.g. e-stop | `field` (`data`), `ok_value` (`true`, `false` or `any`), `true_label`, `false_label`, `bad_level` |
-| `orientation` | Yaw, roll and pitch from a quaternion, with optional tilt limits | `field` (`pose.pose.orientation`), `warn_tilt_deg`, `error_tilt_deg` |
+| `orientation` | Yaw, roll and pitch from a quaternion, with optional tilt limits; an exactly-zero orientation shows as NOT INITIALIZED | `field` (`pose.pose.orientation`), `warn_tilt_deg`, `error_tilt_deg`, `identity_means_uninitialized` (true) |
 | `field` | Any field: numeric thresholds or allowed values | `field` (e.g. `status.temperature`), `warn_above`, `error_above`, `warn_below`, `error_below`, `ok_values`, `unit`, `scale` |
 | `diagnostics` | A `DiagnosticStatus` or `DiagnosticArray` (e.g. Clearpath's `diagnostics_agg`) | `include`, `exclude` (glob on names), `stale_level` |
 | `node` | Nodes matching a name or pattern are running | `node`, `min_count` |
@@ -177,7 +177,9 @@ Options every check accepts:
 - `msg_type` (topic checks): subscribe before the topic appears in discovery.
 
 Rate checks warn below 80% of `expected_hz`, error below 50%, and go STALE when no
-message has arrived for `timeout_s` (default: three periods, at least 2 s). Topics
+message has arrived for `timeout_s` (default: three periods, at least 2 s). A check that
+dropped below a threshold only recovers once the rate is 10% above it again, so a topic
+hovering at the threshold doesn't flip back and forth. Topics
 that are only published on change (e-stop, Wi-Fi) have no `expected_hz`, so they are
 never marked stale. Latched (transient-local) topics are detected automatically.
 

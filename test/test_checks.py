@@ -367,3 +367,27 @@ def test_systemd_status_ok_reads_tailscale_state():
     assert (result.level, result.value) == (WARN, 'STOPPED')
     check.record({**running, 'StatusText': ''})
     assert check.evaluate(Context(now=3)).value == 'ACTIVE'
+
+
+def test_rate_hysteresis_stops_flapping():
+    check = make({'name': 'Lidar', 'topic': 'cloud', 'expected_hz': 5})  # warn below 4 Hz
+    last = feed(check, 3.8, 20)
+    assert check.evaluate(Context(now=last + 0.01)).level == WARN
+    # 4.1 Hz is above the threshold but not clearly: stays a warning instead of flapping
+    last = feed(check, 4.1, 20, start=last + 1)
+    result = check.evaluate(Context(now=last + 0.01))
+    assert result.level == WARN and 'recovering' in result.detail
+    last = feed(check, 4.6, 20, start=last + 1)
+    assert check.evaluate(Context(now=last + 0.01)).level == OK
+    # and from healthy, 4.1 Hz is fine
+    last = feed(check, 4.1, 20, start=last + 1)
+    assert check.evaluate(Context(now=last + 0.01)).level == OK
+
+
+def test_orientation_identity_means_not_initialized():
+    check = make({'name': 'IMU', 'type': 'orientation', 'topic': 'odom'})
+    check.on_message(0.0, odometry(0.0, 0.0, 0.0))
+    result = check.evaluate(Context(now=0.1))
+    assert (result.level, result.value) == (WARN, 'NOT INITIALIZED')
+    check.on_message(0.2, odometry(0.0, 0.0, 0.01))
+    assert check.evaluate(Context(now=0.3)).level == OK

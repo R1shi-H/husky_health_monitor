@@ -26,6 +26,9 @@ OVERALL_LABEL = {OK: 'HEALTHY', IDLE: 'HEALTHY', WAITING: 'STARTING', WARN: 'WAR
 DIAG_OK, DIAG_WARN, DIAG_ERROR, DIAG_STALE = 0, 1, 2, 3
 DIAG_NAMES = {DIAG_OK: 'OK', DIAG_WARN: 'WARN', DIAG_ERROR: 'ERROR', DIAG_STALE: 'STALE'}
 
+# A rate check that dropped below a threshold recovers only above threshold x this
+RATE_HYSTERESIS = 1.1
+
 # NavSatStatus.status as the A300's Fixposition receiver uses it (override with fix_labels)
 FIX_LABELS = {-1: 'NO FIX', 0: 'GNSS FIX', 1: 'RTK FLOAT', 2: 'RTK FIXED'}
 
@@ -209,6 +212,7 @@ class TopicCheck(Check):
         self.last_msg = None
         self.latched = False
         self.type_error = None
+        self._rate_state = OK
 
     def on_message(self, now, msg=None, nbytes=0):
         self.tracker.tick(now, nbytes)
@@ -267,10 +271,19 @@ class TopicCheck(Check):
         # A rate needs a few samples, and latched / on-change topics have none
         if self.latched or self.tracker.total < 3:
             return OK, ''
-        if self.error_below_hz is not None and hz < self.error_below_hz:
-            return ERROR, f'rate {fmt_hz(hz)} < {fmt_hz(self.error_below_hz)}'
-        if self.warn_below_hz is not None and hz < self.warn_below_hz:
-            return WARN, f'rate {fmt_hz(hz)} < {fmt_hz(self.warn_below_hz)}'
+        held = SEVERITY[self._rate_state]
+        for level, limit in ((ERROR, self.error_below_hz), (WARN, self.warn_below_hz)):
+            if limit is None:
+                continue
+            # Once below a threshold, stay there until the rate is clearly back above it,
+            # so a topic hovering right at the threshold doesn't flap between states
+            exit_limit = limit * RATE_HYSTERESIS if SEVERITY[level] <= held else limit
+            if hz < exit_limit:
+                self._rate_state = level
+                if hz < limit:
+                    return level, f'rate {fmt_hz(hz)} < {fmt_hz(limit)}'
+                return level, f'rate {fmt_hz(hz)}, recovering (needs {fmt_hz(exit_limit)})'
+        self._rate_state = OK
         return OK, ''
 
     def describe(self):
@@ -409,6 +422,9 @@ class OrientationCheck(TopicCheck):
         self.field = spec.get('field', 'pose.pose.orientation')
         self.warn_tilt = _float(spec.get('warn_tilt_deg'))
         self.error_tilt = _float(spec.get('error_tilt_deg'))
+        # A real sensor never reads exactly level and facing 0°; the Fixposition INS publishes
+        # that identity orientation until it has initialized (seen on a300_00095 with no fix)
+        self.identity_uninitialized = bool(spec.get('identity_means_uninitialized', True))
 
     def judge(self, ctx, hz):
         q = get_field(self.last_msg, self.field)
@@ -416,6 +432,9 @@ class OrientationCheck(TopicCheck):
         norm = math.sqrt(x * x + y * y + z * z + w * w)
         if not math.isfinite(norm) or norm < 1e-6:
             return Result(WARN, 'NO ORIENTATION', 'quaternion is empty (sensor not initialised?)')
+        if self.identity_uninitialized and x == y == z == 0.0:
+            return Result(WARN, 'NOT INITIALIZED', 'orientation is exactly 0° on every axis; '
+                                                  'the INS has likely not initialized (no GNSS fix?)')
         x, y, z, w = x / norm, y / norm, z / norm, w / norm
         roll = math.degrees(math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y)))
         pitch = math.degrees(math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x)))))

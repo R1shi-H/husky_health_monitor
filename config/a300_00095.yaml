@@ -4,9 +4,9 @@
 # Node names may use * wildcards; a pattern starting with * matches in any namespace.
 # systemd checks ask `systemctl` on the computer the monitor runs on, so run it onboard.
 #
-# Rates below are deliberately conservative starting points. On the robot, run
+# Rates were measured on a300_00095 on 2026-11-09 (robot e-stopped, on the charger).
+# To re-check them, run with the robot in normal operation:
 #   ros2 run husky_health_monitor health_status --calibrate
-# to compare measured rates with expected_hz and tighten them.
 # Warn fires below 80% of expected_hz, error below 50%, and STALE after timeout_s
 # (default: 3 periods, at least 2 s). See README.md for every check type and option.
 
@@ -65,7 +65,7 @@ groups:
       - name: Motor drivers
         type: rate
         topic: platform/motors/feedback
-        expected_hz: 20
+        expected_hz: 50
       - name: Wheel odometry
         type: rate
         topic: platform/odom_filtered
@@ -73,7 +73,7 @@ groups:
       - name: Joint states
         type: rate
         topic: platform/joint_states
-        expected_hz: 20
+        expected_hz: 50
       - name: Controller manager
         type: node
         node: controller_manager
@@ -101,11 +101,11 @@ groups:
       - name: INS IMU
         type: rate
         topic: sensors/ins_0/imu/data
-        expected_hz: 50
+        expected_hz: 200
       - name: IMU 0
         type: rate
         topic: sensors/imu_0/data
-        expected_hz: 100
+        expected_hz: 50
       - name: Localization
         type: rate
         topic: localization/odom
@@ -127,22 +127,22 @@ groups:
       - name: 3D lidar
         type: rate
         topic: sensors/lidar3d_0/pointcloud_voxel
-        expected_hz: 5
+        expected_hz: 4
       - name: Front camera (OAK-D)
         type: rate
         topic: oak_d_pro_w_front/image_color/compressed
-        expected_hz: 10
+        expected_hz: 15
         critical: false
       - name: Rear camera (OAK-D)
         type: rate
         topic: oak_d_pro_w_rear/image_color/compressed
-        expected_hz: 10
+        expected_hz: 15
         critical: false
       # sensors/camera_2/image_raw_throttle/compressed or camera_info would be lighter to watch
       - name: PTZ camera (Axis)
         type: rate
         topic: sensors/camera_2/image_raw/compressed
-        expected_hz: 10
+        expected_hz: 30
         critical: false
 
   - name: Operator Control
