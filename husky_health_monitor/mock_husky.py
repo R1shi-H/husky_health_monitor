@@ -34,7 +34,7 @@ FAULTS = {
     'estop': 'emergency stop engaged',
     'gps_1': 'GPS 1 stops publishing',
     'no_fix': 'GPS 0 loses its fix',
-    'slow_imu': 'IMU 0 drops to 40 Hz',
+    'slow_imu': 'IMU 0 drops to 20 Hz',
     'rear_camera': 'rear OAK-D stops publishing',
     'joystick': 'GCS PS5 controller disconnected',
     'tilt': 'robot pitched 30 degrees (steep slope)',
@@ -51,11 +51,10 @@ class MockHusky(Node):
 
         self.stream('platform/bms/state', BatteryState, 1, self.battery)
         self.stream('platform/emergency_stop', Bool, 1, lambda: Bool(data='estop' in faults))
-        self.stream('platform/safety_stop', Bool, 1, lambda: Bool(data=False))
         self.stream('platform/wifi_connected', Bool, 1, lambda: Bool(data=True))
         self.stream('platform/mcu/status', Header, 1, self.header)
         self.stream('platform/motors/feedback', Header, 50, self.header)
-        self.stream('platform/odom_filtered', Odometry, 50, Odometry)
+        self.stream('platform/odom', Odometry, 50, Odometry)
         self.stream('platform/joint_states', JointState, 50, self.joints)
         self.stream('diagnostics_agg', DiagnosticArray, 1, self.diagnostics)
         self.stream('tf', TFMessage, 50, self.tf)
@@ -65,8 +64,9 @@ class MockHusky(Node):
         self.stream('sensors/ins_0/gps_0/fix', NavSatFix, 5, lambda: self.fix(gps_0))
         if 'gps_1' not in faults:
             self.stream('sensors/ins_0/gps_1/fix', NavSatFix, 5, lambda: self.fix(1))  # RTK float
-        self.stream('sensors/ins_0/imu/data', Imu, 100, Imu)
-        self.stream('sensors/imu_0/data', Imu, 40 if 'slow_imu' in faults else 100, Imu)
+        # Rates as measured on a300_00095
+        self.stream('sensors/ins_0/imu/data', Imu, 200, Imu)
+        self.stream('sensors/imu_0/data', Imu, 20 if 'slow_imu' in faults else 50, Imu)
         self.stream('sensors/lidar2d_0/scan_filtered', LaserScan, 10, self.scan)
         self.stream('sensors/lidar3d_0/pointcloud_voxel', PointCloud2, 10, self.cloud)
         self.stream('oak_d_pro_w_front/image_color/compressed', CompressedImage, 15, self.image)
@@ -205,10 +205,9 @@ def main(args=None):
     nodes = [MockHusky(ns, faults),
              Node('controller_manager', namespace=ns),
              Node('robot_state_publisher', namespace=ns),
-             Node('ekf_node', namespace=f'{ns}/platform'),
              Node('fixposition_driver', namespace=f'{ns}/sensors/ins_0'),
-             Node('joy_node', namespace=f'{ns}/joy_teleop'),
-             Node('teleop_twist_joy_node', namespace=f'{ns}/joy_teleop')]
+             Node('joy_node', namespace=ns),
+             Node('teleop_twist_joy_node', namespace=ns)]
 
     executor = SingleThreadedExecutor()
     for node in nodes:

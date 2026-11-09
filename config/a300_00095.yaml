@@ -48,13 +48,8 @@ groups:
         false_label: RELEASED
         bad_level: warn
         bad_detail: robot cannot drive until the e-stop is released
-      - name: Safety stop
-        type: bool
-        topic: platform/safety_stop
-        ok_value: false
-        true_label: ACTIVE
-        false_label: CLEAR
-        bad_level: warn
+      # platform/safety_stop isn't checked: on the A300 it's an input the platform listens
+      # on (0 publishers), not a status it reports
 
   - name: Drive System
     checks:
@@ -66,10 +61,11 @@ groups:
         type: rate
         topic: platform/motors/feedback
         expected_hz: 50
+      # odom_filtered (EKF) isn't produced on a300_00095, so watch the raw wheel odometry
       - name: Wheel odometry
         type: rate
-        topic: platform/odom_filtered
-        expected_hz: 20
+        topic: platform/odom
+        expected_hz: 20         # not yet measured on the robot; check with --calibrate
       - name: Joint states
         type: rate
         topic: platform/joint_states
@@ -177,7 +173,8 @@ groups:
         unit: mors@velocity_mux.service
       - name: Teleop nodes
         type: node
-        node: joy_teleop/*
+        node: [joy_node, teleop_twist_joy_node]
+        min_count: 2
         missing_level: warn
       - name: Joystick cmd_vel
         type: rate
