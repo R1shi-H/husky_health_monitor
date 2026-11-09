@@ -65,7 +65,7 @@ groups:
       - name: Wheel odometry
         type: rate
         topic: platform/odom
-        expected_hz: 20         # not yet measured on the robot; check with --calibrate
+        expected_hz: 50
       - name: Joint states
         type: rate
         topic: platform/joint_states
