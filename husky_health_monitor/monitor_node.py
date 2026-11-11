@@ -186,6 +186,7 @@ class HealthMonitor(Node):
     def update(self):
         now = time.monotonic()
         system = self.sampler.sample()
+        system['simulate_missing'] = bool(os.environ.get(SIMULATE_ENV))
         ctx = Context(now, now - self.started < self.grace_s, self.graph, system)
         results = {}
         for check in self.checks:
@@ -324,8 +325,8 @@ class HealthMonitor(Node):
                 'Run `export ROS_SUPER_CLIENT=True` before launching.')
         if os.environ.get(SIMULATE_ENV):
             self.get_logger().warning(
-                'local test mode: systemd services that are not installed on this computer '
-                'are shown as active (simulated)')
+                'local test mode: systemd services and network interfaces that only exist on '
+                'the robot are shown as working (simulated)')
 
     def shutdown(self):
         self._stop.set()

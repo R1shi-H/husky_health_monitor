@@ -1,0 +1,24 @@
+# Template for install_service.sh, which fills in the @...@ values.
+[Unit]
+Description=Husky health monitor (husky_health_monitor)
+Wants=network-online.target
+# Start after the Clearpath robot stack when it's installed. The monitor reports anything
+# that is still starting up, so it doesn't need to wait for the stack to finish.
+After=network-online.target clearpath-robot.service
+
+[Service]
+Type=simple
+User=@USER@
+# ROS settings copied from the terminal install_service.sh was run in
+EnvironmentFile=@ENV_FILE@
+# Send log lines to journalctl as they happen instead of in buffered chunks
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && { [ ! -f /etc/clearpath/setup.bash ] || source /etc/clearpath/setup.bash; } && source @WS@/install/setup.bash && export ROS_SUPER_CLIENT=True && exec ros2 launch husky_health_monitor health_monitor.launch.py'
+Restart=on-failure
+RestartSec=10
+# Stop it the way Ctrl-C does, so it shuts down cleanly
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

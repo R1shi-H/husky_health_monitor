@@ -5,7 +5,7 @@ rates, plus empty stand-in nodes for the node checks. Clearpath and Fixposition
 message types are replaced by std_msgs/Header, which is enough for rate checks.
 
 It refuses to start unless ROS traffic is confined to this computer, because
-fake cmd_vel and e-stop messages must never reach the real robot:
+fake e-stop and joystick messages must never reach the real robot:
     source local_test_env.sh
     ros2 run husky_health_monitor mock_husky --faults gps_1,low_battery
 
@@ -16,17 +16,18 @@ the monitor show them as active, and HUSKY_HEALTH_FAILED_SERVICES fails chosen o
 import argparse
 import math
 import os
+import random
 import time
 
 import rclpy
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
-from geometry_msgs.msg import TransformStamped, TwistStamped
+from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
 from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from sensor_msgs.msg import (BatteryState, CompressedImage, Imu, JointState, Joy, LaserScan,
-                             NavSatFix, NavSatStatus, PointCloud2, PointField)
+from sensor_msgs.msg import (BatteryState, CompressedImage, Imu, JointState, Joy, NavSatFix,
+                             NavSatStatus, PointCloud2, PointField)
 from std_msgs.msg import Bool, Header
 from tf2_msgs.msg import TFMessage
 
@@ -35,9 +36,12 @@ FAULTS = {
     'estop': 'emergency stop engaged',
     'gps_1': 'GPS 1 stops publishing',
     'no_fix': 'GPS 0 loses its fix',
+    'rtk_float': 'GPS 1 drops to RTK float',
     'slow_imu': 'IMU 0 drops to 20 Hz',
+    'imu_zeros': 'IMU 0 publishes all-zero readings',
     'rear_camera': 'rear OAK-D stops publishing',
     'joystick': 'GCS PS5 controller disconnected',
+    'ps4': 'onboard PS4 controller not connected',
     'tilt': 'robot pitched 30 degrees (steep slope)',
     'diagnostics': 'Clearpath diagnostics report a motor warning',
 }
@@ -66,28 +70,24 @@ class MockHusky(Node):
         self.stream('sensors/ins_0/xvn/odometry_enu', Odometry, 10, self.odom)
         gps_0 = NavSatStatus.STATUS_NO_FIX if 'no_fix' in faults else 2  # RTK fixed
         self.stream('sensors/ins_0/gps_0/fix', NavSatFix, 5, lambda: self.fix(gps_0))
+        gps_1 = 1 if 'rtk_float' in faults else 2  # RTK float / fixed
         if 'gps_1' not in faults:
-            self.stream('sensors/ins_0/gps_1/fix', NavSatFix, 5, lambda: self.fix(1))  # RTK float
+            self.stream('sensors/ins_0/gps_1/fix', NavSatFix, 5, lambda: self.fix(gps_1))
         # Rates as measured on a300_00095
-        self.stream('sensors/ins_0/imu/data', Imu, 200, Imu)
-        self.stream('sensors/imu_0/data', Imu, 20 if 'slow_imu' in faults else 50, Imu)
-        self.stream('sensors/lidar2d_0/scan_filtered', LaserScan, 10, self.scan)
+        self.stream('sensors/imu_0/data', Imu, 20 if 'slow_imu' in faults else 50, self.imu)
         self.stream('sensors/lidar3d_0/pointcloud_voxel', PointCloud2, 10, self.cloud)
         self.stream('oak_d_pro_w_front/image_color/compressed', CompressedImage, 15, self.image)
         if 'rear_camera' not in faults:
             self.stream('oak_d_pro_w_rear/image_color/compressed', CompressedImage, 15, self.image)
         self.stream('sensors/camera_2/image_raw/compressed', CompressedImage, 30, self.image)
 
+        # The onboard PS4 joy node publishes whether or not a controller is attached
+        self.stream('joy_teleop/joy', Joy, 20, lambda: self.ps4('ps4' not in faults))
         # GCS PS5 and Steam Deck 1 connected, Steam Deck 2 not
         if 'joystick' not in faults:
             self.stream('operators/gcs_ps5/joy', Joy, 20, self.joy)
         self.stream('operators/steamdeck_1/joy', Joy, 20, self.joy)
-        # Drive for 5 s out of every 15 so cmd_vel shows ACTIVE and IDLE
-        self.stream('joy_teleop/cmd_vel', TwistStamped, 20, TwistStamped, when=self.driving)
-        self.stream('cmd_vel', TwistStamped, 20, TwistStamped, when=self.driving)
 
-        self.stream('localization/odom', Odometry, 10, self.odom)
-        self.stream('localization/fix', NavSatFix, 5, lambda: self.fix(2))
         self.create_publisher(Header, 'autonomy/status', 1)  # advertised, nothing published
         self.stream('object_tracking/enabled', Bool, 1, lambda: Bool(data=True))
 
@@ -101,9 +101,6 @@ class MockHusky(Node):
 
     def elapsed(self):
         return time.monotonic() - self.start
-
-    def driving(self):
-        return self.elapsed() % 15 < 5
 
     def header(self):
         msg = Header(frame_id='base_link')
@@ -151,9 +148,21 @@ class MockHusky(Node):
     def joy():
         return Joy(axes=[0.0] * 6, buttons=[0] * 13)
 
-    def scan(self):
-        return LaserScan(header=self.header(), angle_min=-math.pi, angle_max=math.pi,
-                         angle_increment=math.pi / 360, range_max=30.0, ranges=[5.0] * 720)
+    @staticmethod
+    def ps4(connected):
+        # A connected PS4's triggers (axes 2 and 5) rest at 1.0; with no controller all read 0
+        axes = [0.0] * 8
+        if connected:
+            axes[2] = axes[5] = 1.0
+        return Joy(axes=axes, buttons=[0] * 13)
+
+    def imu(self):
+        msg = Imu(header=self.header())
+        if 'imu_zeros' not in self.faults:
+            # Level and still: gravity on z, a little sensor noise
+            msg.linear_acceleration.z = 9.81 + random.uniform(-0.05, 0.05)
+            msg.angular_velocity.z = random.uniform(-0.002, 0.002)
+        return msg
 
     def cloud(self):
         fields = [PointField(name=n, offset=4 * i, datatype=PointField.FLOAT32, count=1)
@@ -200,8 +209,8 @@ def main(args=None):
         parser.error(f'unknown fault(s) {", ".join(sorted(unknown))}; choose from {", ".join(FAULTS)}')
     risk = network_risk()
     if risk:
-        parser.exit(2, f'mock_husky: not starting: {risk}, so fake topics (including cmd_vel and '
-                       'the e-stop) could reach the real Husky.\n'
+        parser.exit(2, f'mock_husky: not starting: {risk}, so fake topics (including the e-stop '
+                       'and joystick input) could reach the real Husky.\n'
                        'Run `source local_test_env.sh` from the package folder first.\n')
 
     rclpy.init(args=args)

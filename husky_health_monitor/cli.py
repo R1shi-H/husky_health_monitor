@@ -30,7 +30,7 @@ def fetch(url, timeout=3.0):
         return json.load(response)
 
 
-def render(snap, color=True, details=True):
+def render(snap, color=True, details=False):
     def paint(code, text):
         return f'{code}{text}{RESET}' if color else text
 
@@ -98,7 +98,8 @@ def main(argv=None):
                         help='monitor address (default: $HUSKY_HEALTH_URL or http://localhost:8088)')
     parser.add_argument('-w', '--watch', nargs='?', const=1.0, type=float, metavar='SECONDS',
                         help='refresh every SECONDS (default 1)')
-    parser.add_argument('--brief', action='store_true', help='hide the reason under warnings/errors')
+    parser.add_argument('-d', '--details', action='store_true',
+                        help='also show the reason under each warning or error')
     parser.add_argument('--no-color', action='store_true')
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--json', action='store_true', help='print the raw JSON snapshot')
@@ -124,7 +125,7 @@ def main(argv=None):
                 elif args.calibrate:
                     output = calibrate(snap)
                 else:
-                    output = render(snap, color, details=not args.brief)
+                    output = render(snap, color, details=args.details)
             if not args.watch:
                 print(output, file=sys.stderr if code == 3 else sys.stdout)
                 return code

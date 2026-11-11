@@ -30,6 +30,7 @@ history:
 groups:
   # Groups are ordered by how much the operator cares: can it drive safely, does it know
   # where it is, can it see, can we control it, is the mission software up, can we reach it.
+  # Checks follow Daylan's review of 2026-11-10.
 
   - name: Power & Safety
     checks:
@@ -61,7 +62,7 @@ groups:
         type: rate
         topic: platform/motors/feedback
         expected_hz: 50
-      # odom_filtered (EKF) isn't produced on a300_00095, so watch the raw wheel odometry
+      # The EKF (odom_filtered) is disabled on this Husky, so watch the raw wheel odometry
       - name: Wheel odometry
         type: rate
         topic: platform/odom
@@ -76,49 +77,38 @@ groups:
 
   - name: Positioning
     checks:
-      # Orientation from the Fixposition INS (localization/odom carries it too)
+      # Orientation from the Fixposition INS (localization/odom carries it too). It publishes
+      # exactly 0 on every axis until it has initialized, which shows as NOT INITIALIZED.
       - name: IMU orientation
         type: orientation
         topic: sensors/ins_0/xvn/odometry_enu
         field: pose.pose.orientation
+        heading: compass        # 0 = North, 90 = East, 180 = South, 270 = West
         expected_hz: 5
         warn_tilt_deg: 25       # tune or remove once we know what the Husky normally sees
-        show_detail: true       # roll and pitch under the yaw
-      # status.status: -1 NO FIX, 0 GNSS FIX, 1 RTK FLOAT, 2 RTK FIXED
-      # (add min_status: 2 to warn whenever the fix is not RTK FIXED)
+        show_detail: true       # roll and pitch under the heading
+      # status.status: 2 RTK FIXED (green), 1 RTK FLOAT (yellow), 0 GNSS FIX and -1 NO FIX (red)
       - name: GPS 0
         type: navsat
         topic: sensors/ins_0/gps_0/fix
         expected_hz: 5
+        status_levels: {2: ok, 1: warn, 0: error, -1: error}
       - name: GPS 1
         type: navsat
         topic: sensors/ins_0/gps_1/fix
         expected_hz: 5
-      - name: INS IMU
-        type: rate
-        topic: sensors/ins_0/imu/data
-        expected_hz: 200
+        status_levels: {2: ok, 1: warn, 0: error, -1: error}
+      # Runs at 50 Hz (set in robot.yaml). Also checks the readings are real: a working IMU
+      # measures gravity (about 9.8 m/s^2), and one that reads all zeros isn't working.
       - name: IMU 0
-        type: rate
+        type: imu
         topic: sensors/imu_0/data
         expected_hz: 50
-      - name: Localization
-        type: rate
-        topic: localization/odom
-        expected_hz: 5
-        critical: false
-      - name: Localization GPS
-        type: navsat
-        topic: localization/fix
-        timeout_s: 5
-        critical: false
+        warn_below_hz: 40
+        error_below_hz: 25
 
   - name: Perception
     checks:
-      - name: 2D lidar
-        type: rate
-        topic: sensors/lidar2d_0/scan_filtered
-        expected_hz: 10
       # The voxel-filtered cloud is the smallest 3D lidar topic, which keeps the monitor cheap.
       # On the robot it arrives unevenly (1.5-4 Hz, gaps up to 1.1 s; confirmed with
       # ros2 topic hz), so it's averaged over 15 s and only a sustained drop alerts.
@@ -149,9 +139,16 @@ groups:
 
   - name: Operator Control
     checks:
-      # Controllers only publish while connected; one that isn't connected is shown grey,
-      # not as a fault. If a connected controller shows NOT CONNECTED while untouched, its
-      # joy node isn't repeating messages: raise timeout_s or set its autorepeat_rate.
+      # The onboard PS4 Bluetooth controller. joy_teleop/joy keeps publishing with no
+      # controller, but its triggers (axes 2 and 5) rest at 1.0 only when one is connected.
+      - name: PS4 controller
+        type: joystick
+        topic: joy_teleop/joy
+        connected_axes: [2, 5]
+        timeout_s: 2
+        missing_level: warn
+      # Operator controllers only publish while connected; one that isn't connected is shown
+      # grey, not as a fault.
       - name: GCS PS5 controller
         type: rate
         topic: operators/gcs_ps5/joy
@@ -177,23 +174,6 @@ groups:
       - name: Velocity mux
         type: systemd
         unit: mors@velocity_mux.service
-      - name: Teleop nodes
-        type: node
-        node: [joy_node, teleop_twist_joy_node]
-        min_count: 2
-        missing_level: warn
-      - name: Joystick cmd_vel
-        type: rate
-        topic: joy_teleop/cmd_vel
-        idle_ok: true
-        ok_label: ACTIVE
-        timeout_s: 1
-      - name: cmd_vel
-        type: rate
-        topic: cmd_vel
-        idle_ok: true
-        ok_label: ACTIVE
-        timeout_s: 1
 
   - name: Mission Services
     checks:
@@ -231,6 +211,8 @@ groups:
         unit: tailscaled.service
         status_ok: [Connected]  # tailscaled can be running but logged out or stopped
         missing_level: warn
+      # Internet: can the robot reach the internet over any link. Wi-Fi: is its Wi-Fi
+      # client connected to a network.
       - name: Internet
         type: ping
         host: 1.1.1.1
@@ -244,6 +226,16 @@ groups:
         false_label: DISCONNECTED
         bad_level: warn
         critical: false
+      # The radio's USB network interface (enx + its MAC address) exists only while the radio
+      # is connected; its br0 address is permanent, so it can't be used. Matched by the
+      # radio's MAC prefix so a replacement radio is still found.
+      - name: Doodle Labs radio
+        type: interface
+        interface: 'enx00301a*'
+        require_ipv4: false
+        ok_label: CONNECTED
+        missing_label: NOT CONNECTED
+        missing_level: warn
       # Uncomment once you know the ground station's address (Doodle Labs or Tailscale IP)
       # - name: Ground station link
       #   type: ping

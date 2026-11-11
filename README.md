@@ -21,9 +21,7 @@ a300_00095 on cpr-a300-00095 at 16:32:58
 POWER & SAFETY                  STATUS
 ------------------------------------------------------------
 Battery                         ✓ 52%
-  └ charging · 26.1 V · +3.6 A
 Emergency stop                  ⚠ ENGAGED
-  └ robot cannot drive until the e-stop is released
 
 DRIVE SYSTEM                    STATUS
 ------------------------------------------------------------
@@ -33,18 +31,19 @@ Wheel odometry                  ✓ 50 Hz
 ...
 POSITIONING                     STATUS
 ------------------------------------------------------------
-IMU orientation                 ⚠ NOT INITIALIZED
-  └ orientation is exactly 0° on every axis; the INS has likely not initialized
-GPS 0                           ⚠ 5.0 Hz · NO FIX
+IMU orientation                 ✓ heading 214° SW
+GPS 0                           ✓ 5.0 Hz · RTK FIXED
+GPS 1                           ⚠ 5.0 Hz · RTK FLOAT
 ...
 ============================================================
-OVERALL SYSTEM STATUS:          ✗ ERROR
+OVERALL SYSTEM STATUS:          ⚠ WARNING
 ```
 
-The dashboard groups the same checks into cards: Power & Safety, Drive System,
-Positioning, Perception, Operator Control, Mission Services, Network, and
-ROS & Diagnostics, with the onboard computer's CPU, memory, disk and temperature as
-tiles at the top.
+Add `--details` (`-d`) to see the reason under each warning or error. The dashboard
+groups the same checks into cards: Power & Safety, Drive System, Positioning,
+Perception, Operator Control, Mission Services, Network, and ROS & Diagnostics, with the
+onboard computer's CPU, memory, disk and temperature as tiles at the top and the
+overall status as a badge next to the title.
 
 ## Run it on the Husky
 
@@ -88,15 +87,16 @@ this repo. Get the real values from the setup notes:
 
    Launch arguments: `namespace:=a300_00095`, `config:=/path/to/your.yaml`, `web_port:=8088`.
 
-   The monitor stops when that terminal closes, so keep it open (or see
-   [Start at boot](#start-at-boot-optional)). The dashboard footer shows which config
+   The monitor stops when that terminal closes, so keep it open, or install it as a
+   service ([Start at boot](#start-at-boot)) so it always runs. The dashboard footer shows which config
    file is in use; it should start with `/home/<robot-user>/health_ws/`. If it shows
    another workspace, that copy is the one running: source
    `~/health_ws/install/setup.bash` last and relaunch.
 
 4. View it:
    - Browser, from any machine on Tailscale: `http://<husky-tailscale-ip>:8088`
-   - Terminal on the robot: `ros2 run husky_health_monitor health_status --watch`
+   - Terminal on the robot: `health` (see below), or
+     `ros2 run husky_health_monitor health_status`
    - Terminal on a laptop (plain Python, no ROS setup needed):
      `python3 husky_health_monitor/cli.py --url http://<husky-tailscale-ip>:8088 --watch`
 
@@ -115,25 +115,45 @@ this repo. Get the real values from the setup notes:
    own file with `config:=`). The GPS navigation service is still a commented-out
    placeholder in **Mission Services**; fill in its unit name once it exists.
 
-`health_status` exit codes: 0 healthy, 1 warning, 2 error, 3 monitor unreachable.
-That makes it usable from scripts, e.g. a pre-mission check.
+### A short `health` command
+
+The terminal readout is plain Python and only talks to the running monitor, so it
+doesn't need ROS set up. On the robot, add a shortcut once:
+
+```bash
+grep -q "alias health=" ~/.bashrc || echo "alias health='python3 ~/health_ws/src/husky_health_monitor/husky_health_monitor/cli.py'" >> ~/.bashrc
+```
+
+Then, in any new terminal: `health` for a snapshot, `health -w` to keep it updating,
+`health -d` to include the reasons. Unlike an alias for `ros2 run`, it works even when
+the workspace isn't sourced.
+
+Exit codes: 0 healthy, 1 warning, 2 error, 3 monitor unreachable. That makes it usable
+from scripts, e.g. a pre-mission check.
 
 ## Notes from testing on a300_00095
 
-Things the config accounts for, found on the real robot on 2026-11-09:
+Things the config accounts for, from testing on the robot (2026-11-09) and Daylan's review:
 
-- `platform/odom_filtered` (EKF) has no publisher, so Wheel odometry watches
-  `platform/odom`. That topic uses transient-local QoS but streams at 50 Hz.
-- `platform/safety_stop` is an input the platform listens on (0 publishers), not a
-  status, so it isn't checked; Emergency stop covers stop state.
+- The EKF is disabled, so `platform/odom_filtered` has no publisher; Wheel odometry
+  watches `platform/odom`, which uses transient-local QoS but streams at 50 Hz.
+- `platform/safety_stop` is an input the platform listens on, not a status, so it isn't
+  checked; Emergency stop covers stop state.
 - The 3D lidar's voxel-filtered cloud arrives unevenly (about 1.5-4 Hz, gaps up to
   1.1 s; `ros2 topic hz` agrees), so that check averages over 15 s.
-- With no GNSS fix, the Fixposition INS reports exactly 0° roll, pitch and yaw, which
-  the dashboard shows as NOT INITIALIZED.
-- `sensors/lidar2d_0/scan_filtered` had no publisher: the 2D lidar driver wasn't
-  running.
-- The joystick nodes are `joy_node` and `teleop_twist_joy_node` in the robot namespace,
-  plus one set per controller under `operators/<name>/`.
+- `sensors/ins_0/xvn/odometry_enu` keeps publishing without a fix or base station, but
+  every value is 0. The dashboard shows that as NOT INITIALIZED. It reports heading as a
+  compass reading (0 = North, 90 = East), converted from ROS's ENU yaw (0 = East).
+- GPS colors follow the fix type: RTK FIXED green, RTK FLOAT yellow, GNSS FIX or NO FIX
+  red. Without RTK corrections (for example indoors, or with no base station) the
+  overall status is ERROR.
+- `joy_teleop/joy` (the onboard Bluetooth PS4 controller) publishes even with no
+  controller attached; the triggers (axes 2 and 5) rest at 1.0 only when one is.
+- IMU 0 runs at 50 Hz (set in `robot.yaml`). Its check also confirms the readings are
+  real: the IMU should measure gravity, about 9.8 m/s².
+- The Doodle Labs radio's USB network interface (`enx` plus its MAC address) only
+  exists while the radio is connected; its `br0` address is permanent, so it isn't used.
+- Not monitored, by request: the 2D lidar, the INS's raw IMU, localization, and cmd_vel.
 
 ## Develop without the robot
 
@@ -148,7 +168,7 @@ everything. It works in any terminal, including one set up for the robot by `~/.
 
 The rest of this section is what that script does, if you'd rather run the pieces
 separately. `mock_husky` publishes fake versions of every topic in the config, at
-realistic rates, and can inject faults. Its topics include `cmd_vel` and the e-stop,
+realistic rates, and can inject faults. Its topics include the e-stop and joystick input,
 so they must never reach the real robot. `local_test_env.sh` cuts a terminal off from
 the Husky's discovery server and keeps ROS traffic on this computer, and the mock
 refuses to start without it. Source it in **both** terminals:
@@ -166,14 +186,15 @@ ros2 launch husky_health_monitor health_monitor.launch.py               # termin
 Then open `http://localhost:8088`, or run `ros2 run husky_health_monitor health_status --watch`
 in a third terminal. Stop both with Ctrl-C. To talk to the Husky again, open a new terminal.
 
-Available faults: `low_battery`, `estop`, `gps_1`, `no_fix`, `slow_imu`, `rear_camera`,
-`joystick` (GCS PS5 disconnected), `tilt` (30° slope), `diagnostics`. On a laptop the
+Available faults: `low_battery`, `estop`, `gps_1` (stops), `no_fix` (GPS 0),
+`rtk_float` (GPS 1), `slow_imu`, `imu_zeros`, `rear_camera`, `ps4` (onboard controller
+not connected), `joystick` (GCS PS5 disconnected), `tilt` (30° slope), `diagnostics`. On a laptop the
 Clearpath-specific checks (MCU, motors) still work, because the mock publishes standard
 stand-in message types.
 
-The MORS systemd services only exist on the robot. In local test mode the monitor shows
-any unit that isn't installed on the laptop as active, marked "simulated"; units the
-laptop really has, like `tailscaled`, are always checked for real. To see a service fail:
+The MORS systemd services and the Doodle Labs radio only exist on the robot. In local
+test mode the monitor shows anything the laptop doesn't have as working, marked
+"simulated"; things the laptop really has, like `tailscaled`, are always checked for real. To see a service fail:
 
 ```bash
 HUSKY_HEALTH_FAILED_SERVICES=mors@atak_bridge.service ros2 launch husky_health_monitor health_monitor.launch.py
@@ -196,16 +217,18 @@ patterns may use `*`; a pattern starting with `*` matches in any namespace.
 |---|---|---|
 | `rate` *(default)* | Messages arrive fast enough (raw subscription, nothing deserialized) | `expected_hz`, `warn_below_hz`, `error_below_hz`, `timeout_s`, `idle_ok`, `ok_label` |
 | `battery` | `sensor_msgs/BatteryState` charge | `warn_below_percent` (30), `error_below_percent` (15), `percentage_scale` |
-| `navsat` | `sensor_msgs/NavSatFix` rate and fix type (-1 NO FIX, 0 GNSS FIX, 1 RTK FLOAT, 2 RTK FIXED) | `expected_hz`, `no_fix_level`, `min_status` (2 = require RTK FIXED), `fix_labels` |
+| `navsat` | `sensor_msgs/NavSatFix` rate and fix type (-1 NO FIX, 0 GNSS FIX, 1 RTK FLOAT, 2 RTK FIXED) | `expected_hz`, `status_levels` (level per fix type, e.g. `{2: ok, 1: warn, 0: error, -1: error}`), or `no_fix_level` and `min_status`; `fix_labels` |
 | `bool` | A boolean field, e.g. e-stop | `field` (`data`), `ok_value` (`true`, `false` or `any`), `true_label`, `false_label`, `bad_level` |
-| `orientation` | Yaw, roll and pitch from a quaternion, with optional tilt limits; an exactly-zero orientation shows as NOT INITIALIZED | `field` (`pose.pose.orientation`), `warn_tilt_deg`, `error_tilt_deg`, `identity_means_uninitialized` (true) |
+| `orientation` | Heading, roll and pitch from a quaternion, with optional tilt limits; an exactly-zero orientation shows as NOT INITIALIZED | `field` (`pose.pose.orientation`), `heading` (`compass`: 0 = North, or `enu`), `warn_tilt_deg`, `error_tilt_deg`, `identity_means_uninitialized` (true) |
+| `joystick` | A joy topic that publishes even with no controller; connected is read from axes that rest away from 0 only when one is attached | `connected_axes` (`[2, 5]`, the PS4 triggers), `timeout_s` |
+| `imu` | `sensor_msgs/Imu` rate, plus readings that aren't all zero and measure gravity | `expected_hz`, `gravity_check` (true), `gravity_tolerance` (3 m/s²) |
 | `field` | Any field: numeric thresholds or allowed values | `field` (e.g. `status.temperature`), `warn_above`, `error_above`, `warn_below`, `error_below`, `ok_values`, `unit`, `scale` |
 | `diagnostics` | A `DiagnosticStatus` or `DiagnosticArray` (e.g. Clearpath's `diagnostics_agg`) | `include`, `exclude` (glob on names), `stale_level` |
 | `node` | Nodes matching a name or pattern are running | `node`, `min_count` |
 | `topic` | A topic has publishers/subscribers (graph only, no data) | `min_publishers`, `min_subscribers` |
 | `ros_graph` | The monitor can see the ROS graph at all | `min_nodes` |
 | `system` | CPU, memory, disk or temperature of the onboard computer | `metric`, `warn_above`, `error_above`, `path` |
-| `interface` | A network interface is up with an IPv4 address | `interface` (e.g. `tailscale0`) |
+| `interface` | A network interface exists and is up, and by default has an IPv4 address | `interface` (a name or glob, e.g. `enx00301a*`), `require_ipv4` (true) |
 | `ping` | A host answers ping (e.g. 1.1.1.1 for internet, or the ground station) | `host`, `warn_ms`, `period_s` |
 | `systemd` | A systemd service is active (`mors@*.service`, `tailscaled`) | `unit`, `user` (a `--user` unit), `period_s`, `status_ok` (status-text prefixes that mean healthy, e.g. `[Connected]` for Tailscale) |
 
@@ -217,7 +240,7 @@ Options every check accepts:
 - `show_detail: true`: always show the detail line (battery voltage, roll and pitch,
   Tailscale status), not only when something is wrong.
 - `idle_ok: true` with `idle_label` (topic checks): no data is a neutral grey state, not
-  a fault. Used for cmd_vel, the controllers and target tracking.
+  a fault. Used for the operator controllers and target tracking.
 - `description`: shown in the dashboard's detail view.
 - `msg_type` (topic checks): subscribe before the topic appears in discovery.
 
@@ -277,35 +300,48 @@ The monitor must not affect normal Husky operation, so:
 | `husky_health_monitor/cli.py` | Terminal readout and `--calibrate` |
 | `husky_health_monitor/mock_husky.py` | Fake robot for development |
 | `run_local_test.sh`, `local_test_env.sh` | Run the fake robot and monitor locally, cut off from the real robot |
+| `install_service.sh`, `systemd/husky-health.service.in` | Install the monitor as a service that starts on boot |
 | `.vscode/` | Editor settings and tasks |
 | `~/.ros/husky_health/health-YYYY-MM-DD.jsonl` | History log: every status change, plus a snapshot every 10 s; 7 days kept |
 
 The dashboard's JSON API (`/api/health`, `/api/history?seconds=900`, `/api/graph`) is
 read-only.
 
-## Start at boot (optional)
+## Start at boot
 
-To have the monitor running whenever the Husky is on, add a systemd user service
-(`~/.config/systemd/user/husky-health.service`):
+To have the monitor running whenever the Husky is on, install it as a system service.
+On the robot, in a terminal where `ros2 node list` shows the Husky's nodes (the service
+copies that terminal's ROS settings), after stopping any monitor you started by hand:
 
-```ini
-[Unit]
-Description=Husky health monitor
-After=network-online.target
-
-[Service]
-Environment=ROS_DISCOVERY_SERVER=127.0.0.1:11811;
-Environment=ROS_SUPER_CLIENT=True
-ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source %h/health_ws/install/setup.bash && exec ros2 launch husky_health_monitor health_monitor.launch.py'
-Restart=on-failure
-
-[Install]
-WantedBy=default.target
+```bash
+~/health_ws/src/husky_health_monitor/install_service.sh
 ```
 
-Set `ROS_DISCOVERY_SERVER` to whatever `echo $ROS_DISCOVERY_SERVER` shows in a robot
-shell. Then run `systemctl --user enable --now husky-health` and
-`loginctl enable-linger <robot-user>`. Check with the team before adding services to the robot.
+It asks for the robot's sudo password once, then starts the service and enables it for
+every boot. It runs as the robot user, after the Clearpath stack, and restarts itself if
+it crashes.
+
+| Task | Command |
+|---|---|
+| Status | `systemctl status husky-health` |
+| Live logs | `journalctl -u husky-health -f` |
+| After `git pull` and `colcon build` | `sudo systemctl restart husky-health` |
+| Stop until next boot | `sudo systemctl stop husky-health` |
+| Uninstall | `~/health_ws/src/husky_health_monitor/install_service.sh --remove` |
+
+Things to know:
+
+- **Port 8088 belongs to the service.** Starting another copy by hand fails with
+  "Address already in use". Stop the service first, or give the manual copy its own
+  port and node name:
+  `ros2 run husky_health_monitor health_monitor --ros-args -r __ns:=/a300_00095 -r __node:=health_monitor_dev -p web_port:=8089`
+- **The dashboard is always on**, on every network the robot is connected to (Wi-Fi,
+  Doodle Labs, Tailscale). It's read-only, but if that's too open, set `web.host` in the
+  config to the robot's Tailscale address so it only listens there.
+- **It costs about 5-7% of one CPU core and about 115 MB of RAM** around the clock, and
+  writes a small history log to `~/.ros/husky_health` (7 days kept).
+- **ROS settings are copied at install time.** If the robot's discovery server or domain
+  changes, run `install_service.sh` again.
 
 ## Troubleshooting
 
@@ -315,9 +351,10 @@ shell. Then run `systemctl --user enable --now husky-health` and
 | Many checks `NO PUBLISHER` but `ros2 topic list` shows them | `ROS_SUPER_CLIENT` isn't `True` in the monitor's shell (the node logs a warning) |
 | `NO TYPE` | The message package isn't installed or sourced where the monitor runs (e.g. Clearpath messages on a laptop) |
 | Service `NOT FOUND` | The monitor isn't running on the robot, or the unit name is wrong; check `systemctl list-units 'mors@*'` |
-| A connected controller shows `NOT CONNECTED` | Its joy node only publishes on input; raise `timeout_s` or set the joy node's `autorepeat_rate` |
+| A connected controller shows `NOT CONNECTED` | For an operator controller, its joy node only publishes on input; raise `timeout_s` or set the joy node's `autorepeat_rate`. For the PS4, check `ros2 topic echo --once /a300_00095/joy_teleop/joy` shows axes 2 and 5 at 1.0 |
 | Node or topic check `NOT RUNNING` | The name doesn't match; check `ros2 node list` / `ros2 topic list` |
 | Rate checks flicker between OK and WARNING | `expected_hz` is too close to the real rate; use `--calibrate`. For a topic that's naturally uneven, add `window_s` to average over longer |
-| `could not start the dashboard ... Address already in use` | Another monitor is already running. Find it with `ps -eo pid,lstart,args \| grep "[h]ealth_monitor"`, stop it if it's yours, then relaunch |
+| `could not start the dashboard ... Address already in use` | Another monitor is already running: the service, or one started by hand. Check `systemctl status husky-health` and `ps -eo pid,lstart,args \| grep "[h]ealth_monitor"` |
+| Dashboard down after the robot boots | `systemctl status husky-health` and `journalctl -u husky-health -n 50` show why |
 | Dashboard shows an old version | The browser is showing the other monitor (see the row above), or another workspace's copy is running; check the config path in the footer |
 | Dashboard unreachable | The monitor isn't running, port 8088 is blocked or Tailscale is down; use the SSH tunnel above |

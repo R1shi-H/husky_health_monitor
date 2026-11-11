@@ -107,22 +107,8 @@
   .ico.idle { border: 2px solid var(--neutral); }
   .ico.waiting { border: 2px solid var(--neutral); color: var(--neutral); }
 
-  /* overall */
-  .overall { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 16px 32px; margin-bottom: 16px; }
-  .overall-head { display: flex; align-items: center; gap: 14px; }
-  .overall-label { font-size: 28px; font-weight: 650; letter-spacing: 0.01em; line-height: 1.1; }
-  .overall-sub { color: var(--ink-2); font-size: 13px; margin-top: 2px; }
-  .issues { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 4px; }
-  .issues li { display: flex; gap: 8px; align-items: flex-start; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
-  .issues li:hover { background: var(--hover); }
-  .issues .what { font-weight: 550; }
-  .issues .why { color: var(--ink-2); }
-  .all-good { color: var(--ink-2); margin-top: 14px; }
-  .timeline-head, .axis-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-2); }
-  .axis-row { color: var(--axis); font-size: 11px; margin-top: 4px; }
-  .timeline-svg { display: block; width: 100%; height: 22px; margin-top: 6px; }
-  .legend { display: flex; gap: 12px; flex-wrap: wrap; }
-  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  /* overall status, next to the title */
+  .overall-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 650; padding: 2px 10px 2px 4px; border: 1px solid var(--border); border-radius: 999px; }
   .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 
   /* tiles */
@@ -196,7 +182,6 @@
   .tip { position: fixed; z-index: 10; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; font-size: 12px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); white-space: nowrap; }
 
   @media (max-width: 760px) {
-    .overall { grid-template-columns: 1fr; }
     .tiles.with-hero { grid-template-columns: 1fr; }
     .tile.hero .tile-value { font-size: 40px; }
   }
@@ -211,6 +196,7 @@
   <header class="top">
     <div class="title">
       <h1>Husky A300 health</h1>
+      <span class="overall-badge" id="overall"><span class="ico sm waiting">…</span><span id="overall-label">Starting</span></span>
       <span class="robot" id="robot">Connecting…</span>
     </div>
     <div class="top-right">
@@ -221,32 +207,6 @@
 
   <main id="main">
     <div class="banner" id="lost-banner" hidden></div>
-
-    <section class="card overall dim-when-lost" aria-live="polite">
-      <div>
-        <div class="overall-head">
-          <span class="ico lg waiting" id="overall-ico">…</span>
-          <div>
-            <div class="overall-label" id="overall-label">Starting</div>
-            <div class="overall-sub" id="overall-sub">Waiting for the monitor</div>
-          </div>
-        </div>
-        <ul class="issues" id="issues"></ul>
-        <div class="all-good" id="all-good" hidden></div>
-      </div>
-      <div>
-        <div class="timeline-head">
-          <span>Overall status, last 15 minutes</span>
-          <span class="legend">
-            <span><span class="swatch" style="background:var(--good)"></span>Healthy</span>
-            <span><span class="swatch" style="background:var(--warning)"></span>Warning</span>
-            <span><span class="swatch" style="background:var(--critical)"></span>Error</span>
-          </span>
-        </div>
-        <svg class="timeline-svg" id="timeline" role="img" aria-label="Overall status over the last 15 minutes"></svg>
-        <div class="axis-row"><span>15 min ago</span><span>now</span></div>
-      </div>
-    </section>
 
     <section class="tiles dim-when-lost" id="tiles"></section>
     <section class="groups dim-when-lost" id="groups"></section>
@@ -342,7 +302,7 @@ function fmtDuration(s) {
   return h ? `${h} h ${m} min` : `${m} min`;
 }
 function unitFor(c) {
-  if (c.kind === 'rate' || c.kind === 'navsat') return ' Hz';
+  if (RATE_KINDS.has(c.kind)) return ' Hz';
   if (c.kind === 'battery') return '%';
   if (c.kind === 'system') return c.system_metric === 'temperature' ? ' °C' : '%';
   if (c.kind === 'ping') return ' ms';
@@ -350,7 +310,7 @@ function unitFor(c) {
   return '';
 }
 function metricLabel(c) {
-  return { rate: 'Message rate', navsat: 'Message rate', battery: 'Charge', system: c.system_metric === 'temperature' ? 'Temperature' : 'Usage',
+  return { rate: 'Message rate', navsat: 'Message rate', imu: 'Message rate', battery: 'Charge', system: c.system_metric === 'temperature' ? 'Temperature' : 'Usage',
            ping: 'Round trip', node: 'Matching nodes', bool: 'Value (1 = true)', ros_graph: 'Nodes visible', field: 'Value',
            orientation: 'Tilt (larger of roll and pitch)' }[c.kind] || 'Value';
 }
@@ -360,7 +320,7 @@ function yMaxFor(c, values) {
   if (c.kind === 'system') return Math.max(100, max * 1.1);
   if (c.kind === 'bool') return 1;
   if (c.kind === 'orientation') return Math.max(c.error_tilt_deg || c.warn_tilt_deg || 30, max * 1.15);
-  const expected = c.kind === 'rate' || c.kind === 'navsat' ? c.expected_hz || 0 : 0;
+  const expected = RATE_KINDS.has(c.kind) ? c.expected_hz || 0 : 0;
   return Math.max(expected * 1.25, max * 1.15, 1);
 }
 
@@ -428,7 +388,8 @@ function linePaths(ts, vs, xOf, yOf, base) {
 
 // Draws a single-series line chart into svg; axes=true adds y labels and an expected-rate line.
 // Kinds whose value has a trend worth a row sparkline (on/off and running/stopped rows get none)
-const SPARK_KINDS = new Set(['rate', 'navsat', 'battery', 'orientation', 'ping', 'field', 'system']);
+const SPARK_KINDS = new Set(['rate', 'navsat', 'imu', 'battery', 'orientation', 'ping', 'field', 'system']);
+const RATE_KINDS = new Set(['rate', 'navsat', 'imu']);
 
 function drawSeries(svg, check, spanS, axes, wash = true) {
   const w = Math.max(40, Math.round(svg.getBoundingClientRect().width)) || 76;
@@ -451,7 +412,7 @@ function drawSeries(svg, check, spanS, axes, wash = true) {
     extra += `<line x1="${padL}" x2="${w - padR}" y1="${padT}" y2="${padT}" stroke="var(--grid)" stroke-width="1"/>`;
     extra += `<text x="${padL - 6}" y="${padT + 4}" text-anchor="end">${esc(fmtNum(yMax))}</text>`;
     extra += `<text x="${padL - 6}" y="${h - padB}" text-anchor="end">0</text>`;
-    if (check.expected_hz && (check.kind === 'rate' || check.kind === 'navsat')) {
+    if (check.expected_hz && RATE_KINDS.has(check.kind)) {
       const y = yOf(check.expected_hz).toFixed(1);
       extra += `<line x1="${padL}" x2="${w - padR}" y1="${y}" y2="${y}" stroke="var(--baseline)" stroke-width="1"/>`;
       extra += `<text x="${w - padR}" y="${y - 4}" text-anchor="end">expected ${esc(fmtNum(check.expected_hz))} Hz</text>`;
@@ -507,40 +468,6 @@ function bindHover(svg) {
   });
 }
 
-function drawTimeline() {
-  const svg = $('#timeline');
-  const w = Math.round(svg.getBoundingClientRect().width) || 600, h = 22;
-  const x0 = state.lastT - WINDOW_S, xOf = t => (t - x0) / WINDOW_S * w;
-  const period = (state.snap && state.snap.update_period_s) || 1;
-  const runs = [];
-  for (let i = 0; i < state.t.length; i++) {
-    const t = state.t[i], lvl = RANK_LEVEL[state.lvl[i]] || 'waiting';
-    const end = i + 1 < state.t.length ? Math.min(state.t[i + 1], t + 3 * period) : t + period;
-    const last = runs[runs.length - 1];
-    if (last && last.lvl === lvl && t - last.end < 3 * period) last.end = end;
-    else runs.push({ lvl, start: t, end });
-  }
-  let out = `<rect x="0" y="0" width="${w}" height="${h}" rx="4" fill="var(--surface-2)"/>`;
-  for (const r of runs) {
-    const x = Math.max(0, xOf(r.start)), width = Math.max(2, xOf(r.end) - x - 2);
-    out += `<rect x="${x.toFixed(1)}" y="0" width="${width.toFixed(1)}" height="${h}" rx="4" fill="${LEVEL_COLOR[r.lvl]}"/>`;
-  }
-  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
-  svg.innerHTML = out;
-  svg._runs = runs; svg._xOf = xOf; svg._w = w; svg._x0 = x0;
-}
-(() => {
-  const svg = $('#timeline');
-  svg.addEventListener('pointermove', e => {
-    const r = svg.getBoundingClientRect();
-    const t = svg._x0 + (e.clientX - r.left) / r.width * WINDOW_S;
-    const run = (svg._runs || []).find(run => t >= run.start && t <= run.end);
-    if (!run) { hideTip(); return; }
-    showTip(e.clientX, e.clientY, `${ico(run.lvl, 'sm')} <b>${LEVEL_TEXT[run.lvl]}</b> · ${esc(fmtTime(run.start))} – ${esc(fmtTime(run.end))}`);
-  });
-  svg.addEventListener('pointerleave', hideTip);
-})();
-
 // ---------- rendering ----------
 const isTileGroup = g => g.checks.length && g.checks.every(c => c.kind === 'system');
 const allChecks = snap => snap.groups.flatMap(g => g.checks.map(c => ({ ...c, group: g.name })));
@@ -550,7 +477,6 @@ function render() {
   if (!snap) return;
   $('#robot').textContent = `${snap.robot} on ${snap.hostname || '?'}`;
   renderOverall(snap);
-  drawTimeline();
   renderTiles(snap);
   renderGroups(snap);
   renderEvents(snap);
@@ -561,27 +487,15 @@ function render() {
 
 function renderOverall(snap) {
   const o = snap.overall, c = o.counts;
-  const ic = $('#overall-ico');
-  ic.className = `ico lg ${o.level}`;
-  ic.textContent = GLYPH[o.level];
-  ic.setAttribute('aria-label', LEVEL_TEXT[o.level]);
-  $('#overall-label').textContent = o.label;
   const parts = [`${c.ok + c.idle} healthy`];
   if (c.warn) parts.push(`${c.warn} warning${c.warn > 1 ? 's' : ''}`);
   if (c.error) parts.push(`${c.error} error${c.error > 1 ? 's' : ''}`);
   if (c.waiting) parts.push(`${c.waiting} waiting`);
-  $('#overall-sub').textContent = parts.join(' · ');
+  const badge = $('#overall');
+  badge.firstElementChild.outerHTML = ico(o.level, 'sm');
+  $('#overall-label').textContent = o.label;
+  badge.title = parts.join(' · ');
   document.title = `${o.level === 'ok' ? '✓' : o.level === 'error' ? '✕' : o.level === 'warn' ? '!' : '…'} Husky ${o.label.toLowerCase()}`;
-
-  const issues = allChecks(snap).filter(x => RANK[x.level] >= RANK.warn)
-    .sort((a, b) => RANK[b.level] - RANK[a.level]);
-  $('#issues').innerHTML = issues.slice(0, 8).map(x =>
-    `<li data-id="${esc(x.id)}">${ico(x.level)}<span><span class="what">${esc(x.group)} › ${esc(x.name)}</span> — ${esc(x.value)}` +
-    (x.detail ? `<span class="why"> · ${esc(x.detail)}</span>` : '') + `</span></li>`).join('') +
-    (issues.length > 8 ? `<li class="why">and ${issues.length - 8} more</li>` : '');
-  const good = $('#all-good');
-  good.hidden = issues.length > 0;
-  good.textContent = c.waiting ? 'Checks are starting up.' : `All ${snap.monitor.checks} checks are healthy.`;
 }
 
 function renderTiles(snap) {
@@ -812,15 +726,6 @@ $('#graph-search').addEventListener('input', renderGraph);
 $('#unwatched').addEventListener('change', renderGraph);
 
 // ---------- wiring ----------
-$('#issues').addEventListener('click', e => {
-  const li = e.target.closest('li[data-id]');
-  if (!li) return;
-  const refs = state.rows.get(li.dataset.id);
-  if (!refs) return;
-  if (!state.expanded.has(li.dataset.id)) toggleRow(li.dataset.id);
-  refs.row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  refs.row.focus({ preventScroll: true });
-});
 $('#theme').addEventListener('click', () => {
   const dark = getComputedStyle(document.documentElement).colorScheme.includes('dark');
   const next = dark ? 'light' : 'dark';

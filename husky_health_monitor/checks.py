@@ -378,11 +378,25 @@ class NavSatCheck(TopicCheck):
         self.min_status = int(spec.get('min_status', 0))
         self.fix_labels = {**FIX_LABELS, **{int(k): str(v) for k, v in
                                             (spec.get('fix_labels') or {}).items()}}
+        # Optional level per fix type, e.g. {2: ok, 1: warn, 0: error, -1: error}
+        self.status_levels = None
+        if spec.get('status_levels'):
+            self.status_levels = {int(k): v for k, v in spec['status_levels'].items()}
+            if not set(self.status_levels.values()) <= {OK, WARN, ERROR}:
+                raise ConfigError(f'{group} / {self.name}: status_levels must be ok, warn or error')
 
     def judge(self, ctx, hz):
         status = int(get_field(self.last_msg, 'status.status'))
         label = self.fix_labels.get(status, f'STATUS {status}')
         value = _join(fmt_hz(hz), label) if self.tracker.total >= 3 else label
+        if self.status_levels is not None:
+            level = self.status_levels.get(status, self.no_fix_level if status < 0 else OK)
+            if level == OK:
+                return Result(OK, value, '', hz)
+            best = max((k for k, v in self.status_levels.items() if v == OK), default=None)
+            wanted = f', want {self.fix_labels.get(best, best)}' if best is not None else ''
+            reason = 'receiver reports no fix' if status < 0 else f'fix type {label}{wanted}'
+            return Result(level, value, reason, hz)
         if status < 0:
             return Result(self.no_fix_level, value, 'receiver reports no fix', hz)
         if status < self.min_status:
@@ -432,6 +446,10 @@ class OrientationCheck(TopicCheck):
         # A real sensor never reads exactly level and facing 0°; the Fixposition INS publishes
         # that identity orientation until it has initialized (seen on a300_00095 with no fix)
         self.identity_uninitialized = bool(spec.get('identity_means_uninitialized', True))
+        # compass: 0 = North, 90 = East (clockwise). enu: ROS yaw, 0 = East, counter-clockwise
+        self.heading = spec.get('heading', 'compass')
+        if self.heading not in ('compass', 'enu'):
+            raise ConfigError(f'{group} / {self.name}: heading must be compass or enu')
 
     def judge(self, ctx, hz):
         q = get_field(self.last_msg, self.field)
@@ -447,7 +465,12 @@ class OrientationCheck(TopicCheck):
         pitch = math.degrees(math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x)))))
         yaw = math.degrees(math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
         tilt = max(abs(roll), abs(pitch))
-        value, detail = f'yaw {yaw:.0f}°', f'roll {roll:+.1f}° · pitch {pitch:+.1f}°'
+        if self.heading == 'compass':
+            heading = round(90.0 - yaw) % 360
+            value = f'heading {heading}° {_cardinal(heading)}'
+        else:
+            value = f'yaw {yaw:.0f}°'
+        detail = f'roll {roll:+.1f}° · pitch {pitch:+.1f}°'
         for level, limit in ((ERROR, self.error_tilt), (WARN, self.warn_tilt)):
             if limit is not None and tilt > limit:
                 return Result(level, value, _join(f'tilted {tilt:.0f}° (limit {limit:g}°)', detail), tilt)
@@ -455,7 +478,78 @@ class OrientationCheck(TopicCheck):
 
     def describe(self):
         return {**super().describe(), 'warn_tilt_deg': self.warn_tilt,
-                'error_tilt_deg': self.error_tilt}
+                'error_tilt_deg': self.error_tilt, 'heading': self.heading}
+
+
+def _cardinal(heading):
+    return ('N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW')[int((heading + 22.5) // 45) % 8]
+
+
+class JoystickCheck(TopicCheck):
+    """A joy topic that keeps publishing with no controller attached, like joy_teleop/joy for
+    the A300's Bluetooth PS4 controller. Whether a controller is attached is read from axes
+    that rest away from 0 only while one is, such as the PS4 triggers (axes 2 and 5)."""
+
+    kind = 'joystick'
+    needs_message = True
+    metric_is_rate = False
+
+    def __init__(self, spec, group, namespace):
+        super().__init__(spec, group, namespace)
+        self.axes = [int(a) for a in spec.get('connected_axes', [2, 5])]
+        if not self.axes:
+            raise ConfigError(f'{group} / {self.name}: connected_axes needs at least one axis')
+        self.idle_label = spec.get('idle_label', 'NOT CONNECTED')
+
+    def judge(self, ctx, hz):
+        axes = list(self.last_msg.axes)
+        # Pressing every listed trigger to exactly 0.0 at once is practically impossible,
+        # so all of them at 0 means nothing is attached
+        if all(i >= len(axes) or axes[i] == 0.0 for i in self.axes):
+            return Result(IDLE, self.idle_label, 'joy node is running but no controller is '
+                                                 f'attached (axes {self.axes} read 0)', 0.0)
+        return Result(OK, self.ok_label or 'CONNECTED', '', 1.0)
+
+    def describe(self):
+        return {**super().describe(), 'connected_axes': self.axes}
+
+
+GRAVITY = 9.81
+
+
+class ImuCheck(TopicCheck):
+    """sensor_msgs/Imu: rate plus a check that the readings are real. A working IMU measures
+    gravity (about 9.8 m/s^2); one that reads all zeros isn't producing data. Acceleration is
+    smoothed so bumps while driving don't trip the gravity check."""
+
+    kind = 'imu'
+    needs_message = True
+
+    def __init__(self, spec, group, namespace):
+        super().__init__(spec, group, namespace)
+        self.gravity_check = bool(spec.get('gravity_check', True))
+        self.tolerance = float(spec.get('gravity_tolerance', 3.0))
+        self.accel = None
+
+    def on_message(self, now, msg=None, nbytes=0):
+        super().on_message(now, msg, nbytes)
+        if msg is not None:
+            a = msg.linear_acceleration
+            magnitude = math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z)
+            self.accel = magnitude if self.accel is None else 0.9 * self.accel + 0.1 * magnitude
+
+    def judge(self, ctx, hz):
+        a, w = self.last_msg.linear_acceleration, self.last_msg.angular_velocity
+        value = fmt_hz(hz) if self.tracker.total >= 3 else 'OK'
+        if all(v == 0.0 for v in (a.x, a.y, a.z, w.x, w.y, w.z)):
+            return Result(ERROR, 'ALL ZEROS', 'the IMU publishes, but every reading is 0', hz)
+        if self.gravity_check and abs(self.accel - GRAVITY) > self.tolerance:
+            return Result(WARN, value, f'acceleration {self.accel:.1f} m/s², expected about '
+                                       f'{GRAVITY:.1f} (gravity)', hz)
+        return Result(OK, value, f'|a| {self.accel:.2f} m/s²', hz)
+
+    def describe(self):
+        return {**super().describe(), 'gravity_check': self.gravity_check}
 
 
 class FieldCheck(TopicCheck):
@@ -677,7 +771,8 @@ class SystemCheck(Check):
 
 
 class InterfaceCheck(Check):
-    """A network interface (e.g. tailscale0, wlan0) is up and has an IPv4 address."""
+    """A network interface (e.g. wlan0, or a radio's USB interface) exists and is up, and by
+    default has an IPv4 address. The name may be a glob such as 'enx00301a*'."""
 
     kind = 'interface'
 
@@ -686,19 +781,30 @@ class InterfaceCheck(Check):
         if not spec.get('interface'):
             raise ConfigError(f'{group} / {self.name}: interface checks need an interface name')
         self.interface = spec['interface']
+        self.require_ipv4 = bool(spec.get('require_ipv4', True))
 
     def evaluate(self, ctx):
         interfaces = ctx.system.get('interfaces')
         if interfaces is None:
             return Result(IDLE, 'N/A', 'interface info not available (install python3-psutil)')
-        info = interfaces.get(self.interface)
-        if info is None:
-            return self.missing('MISSING', f'no interface named {self.interface}')
+        names = sorted(n for n in interfaces if fnmatch.fnmatchcase(n, self.interface))
+        if not names:
+            if ctx.system.get('simulate_missing'):
+                return Result(OK, self.ok_label or 'UP', 'simulated (local test mode)')
+            return self.missing('MISSING', f'no interface matching {self.interface}')
+        name = next((n for n in names if interfaces[n]['up']), names[0])
+        info = interfaces[name]
         if not info['up']:
-            return self.missing('DOWN', f'{self.interface} is down')
+            return self.missing('DOWN', f'{name} is down')
+        if not self.require_ipv4:
+            return Result(OK, self.ok_label or 'UP', name)
         if not info['ipv4']:
-            return Result(WARN, 'NO IP', f'{self.interface} is up but has no IPv4 address')
-        return Result(OK, self.ok_label or info['ipv4'], self.interface)
+            return Result(WARN, 'NO IP', f'{name} is up but has no IPv4 address')
+        return Result(OK, self.ok_label or info['ipv4'], name)
+
+    def describe(self):
+        return {**super().describe(), 'interface': self.interface,
+                'require_ipv4': self.require_ipv4}
 
 
 class PingCheck(Check):
@@ -799,7 +905,8 @@ def _since(props):
 
 
 CHECK_TYPES = {cls.kind: cls for cls in (
-    RateCheck, BatteryCheck, NavSatCheck, BoolCheck, OrientationCheck, FieldCheck,
+    RateCheck, BatteryCheck, NavSatCheck, BoolCheck, OrientationCheck, JoystickCheck,
+    ImuCheck, FieldCheck,
     DiagnosticsCheck, NodeCheck, TopicGraphCheck, RosGraphCheck, SystemCheck, InterfaceCheck,
     PingCheck, SystemdCheck,
 )}

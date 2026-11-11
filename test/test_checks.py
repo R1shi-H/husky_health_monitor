@@ -254,7 +254,8 @@ def odometry(roll, pitch, yaw):
 
 
 def test_orientation_reports_yaw_roll_pitch():
-    check = make({'name': 'IMU', 'type': 'orientation', 'topic': 'odom', 'warn_tilt_deg': 25})
+    check = make({'name': 'IMU', 'type': 'orientation', 'topic': 'odom', 'warn_tilt_deg': 25,
+                  'heading': 'enu'})
     check.on_message(0.0, odometry(-1.0, 2.0, 90.0))
     result = check.evaluate(Context(now=0.1))
     assert (result.level, result.value) == (OK, 'yaw 90°')
@@ -403,3 +404,81 @@ def test_transient_local_stream_is_still_rate_checked():
     assert (result.level, result.value) == (OK, '50 Hz')
     stale = check.evaluate(Context(now=last + 5))
     assert stale.value == 'STALE'
+
+
+@pytest.mark.parametrize('enu_yaw, compass', [
+    (90, 'heading 0° N'), (0, 'heading 90° E'), (-90, 'heading 180° S'), (180, 'heading 270° W'),
+    (45, 'heading 45° NE'),
+])
+def test_orientation_compass_heading(enu_yaw, compass):
+    check = make({'name': 'IMU', 'type': 'orientation', 'topic': 'odom'})
+    check.on_message(0.0, odometry(0.0, 1.0, enu_yaw))
+    assert check.evaluate(Context(now=0.1)).value == compass
+
+
+@pytest.mark.parametrize('status, level', [(2, OK), (1, WARN), (0, ERROR), (-1, ERROR)])
+def test_gps_status_colors(status, level):
+    check = make({'name': 'GPS', 'type': 'navsat', 'topic': 'fix',
+                  'status_levels': {2: 'ok', 1: 'warn', 0: 'error', -1: 'error'}})
+    check.on_message(0.0, Msg(status=Msg(status=status)))
+    result = check.evaluate(Context(now=0.1))
+    assert result.level == level
+    if level != OK:
+        assert result.detail
+
+
+def ps4(axes):
+    return Msg(axes=axes, buttons=[0] * 13)
+
+
+@pytest.mark.parametrize('axes, level, value', [
+    ([0.0, 0.0, 1.0, 0.0, 0.0, 1.0], OK, 'CONNECTED'),             # triggers at rest
+    ([0.3, -0.2, -0.5, 0.0, 0.0, 1.0], OK, 'CONNECTED'),           # one trigger pressed
+    ([0.0] * 8, IDLE, 'NOT CONNECTED'),                            # joy node, no controller
+    ([], IDLE, 'NOT CONNECTED'),
+])
+def test_ps4_connection_from_trigger_axes(axes, level, value):
+    check = make({'name': 'PS4', 'type': 'joystick', 'topic': 'joy_teleop/joy', 'timeout_s': 2})
+    check.on_message(0.0, ps4(axes))
+    result = check.evaluate(Context(now=0.1))
+    assert (result.level, result.value) == (level, value)
+
+
+def imu_msg(az, wz=0.001):
+    return Msg(linear_acceleration=Msg(x=0.0, y=0.0, z=az), angular_velocity=Msg(x=0.0, y=0.0, z=wz))
+
+
+def test_imu_checks_the_readings():
+    check = make({'name': 'IMU 0', 'type': 'imu', 'topic': 'imu', 'expected_hz': 50})
+    last = feed(check, 50, 3, msg=imu_msg(9.8))
+    result = check.evaluate(Context(now=last + 0.01))
+    assert (result.level, result.value) == (OK, '50 Hz')
+
+    zeros = make({'name': 'IMU 0', 'type': 'imu', 'topic': 'imu', 'expected_hz': 50})
+    last = feed(zeros, 50, 3, msg=imu_msg(0.0, 0.0))
+    assert zeros.evaluate(Context(now=last + 0.01)).value == 'ALL ZEROS'
+
+    wrong_units = make({'name': 'IMU 0', 'type': 'imu', 'topic': 'imu', 'expected_hz': 50})
+    last = feed(wrong_units, 50, 3, msg=imu_msg(1.0))  # g instead of m/s^2
+    assert wrong_units.evaluate(Context(now=last + 0.01)).level == WARN
+
+
+def test_imu_gravity_is_smoothed():
+    check = make({'name': 'IMU 0', 'type': 'imu', 'topic': 'imu', 'expected_hz': 50})
+    last = feed(check, 50, 3, msg=imu_msg(9.8))
+    check.on_message(last + 0.02, imu_msg(25.0))  # one bump while driving
+    assert check.evaluate(Context(now=last + 0.03)).level == OK
+
+
+def test_doodle_radio_interface_by_prefix():
+    check = make({'name': 'Doodle', 'type': 'interface', 'interface': 'enx00301a*',
+                  'require_ipv4': False, 'ok_label': 'CONNECTED',
+                  'missing_label': 'NOT CONNECTED', 'missing_level': 'warn'})
+    present = {'interfaces': {'br0': {'up': True, 'ipv4': '10.0.0.1'},
+                              'enx00301a000001': {'up': True, 'ipv4': ''}}}
+    assert check.evaluate(Context(now=0, system=present)).value == 'CONNECTED'
+    absent = {'interfaces': {'br0': {'up': True, 'ipv4': '10.0.0.1'}}}
+    result = check.evaluate(Context(now=0, system=absent))
+    assert (result.level, result.value) == (WARN, 'NOT CONNECTED')
+    simulated = {**absent, 'simulate_missing': True}
+    assert check.evaluate(Context(now=0, system=simulated)).level == OK
