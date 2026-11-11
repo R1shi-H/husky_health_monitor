@@ -153,6 +153,12 @@ Things the config accounts for, from testing on the robot (2026-11-09) and Dayla
   real: the IMU should measure gravity, about 9.8 m/s².
 - The Doodle Labs radio's USB network interface (`enx` plus its MAC address) only
   exists while the radio is connected; its `br0` address is permanent, so it isn't used.
+- Outdoors the robot uses the radio with Wi-Fi off, so Wi-Fi DISCONNECTED is shown in gray,
+  not as a warning.
+- Clearpath diagnostics always carry two warnings that aren't faults: the MCU's "new
+  firmware available" notice and the Wi-Fi monitor. The config excludes both. The
+  controller manager's "high execution jitter" warning is real timing data and is still
+  shown; add `'*Hardware Components Activity*'` to `exclude` if it turns out to be constant.
 - Not monitored, by request: the 2D lidar, the INS's raw IMU, localization, and cmd_vel.
 
 ## Develop without the robot
@@ -218,7 +224,7 @@ patterns may use `*`; a pattern starting with `*` matches in any namespace.
 | `rate` *(default)* | Messages arrive fast enough (raw subscription, nothing deserialized) | `expected_hz`, `warn_below_hz`, `error_below_hz`, `timeout_s`, `idle_ok`, `ok_label` |
 | `battery` | `sensor_msgs/BatteryState` charge | `warn_below_percent` (30), `error_below_percent` (15), `percentage_scale` |
 | `navsat` | `sensor_msgs/NavSatFix` rate and fix type (-1 NO FIX, 0 GNSS FIX, 1 RTK FLOAT, 2 RTK FIXED) | `expected_hz`, `status_levels` (level per fix type, e.g. `{2: ok, 1: warn, 0: error, -1: error}`), or `no_fix_level` and `min_status`; `fix_labels` |
-| `bool` | A boolean field, e.g. e-stop | `field` (`data`), `ok_value` (`true`, `false` or `any`), `true_label`, `false_label`, `bad_level` |
+| `bool` | A boolean field, e.g. e-stop | `field` (`data`), `ok_value` (`true`, `false` or `any`), `true_label`, `false_label`, `bad_level` (`warn`, `error`, or `idle` for gray) |
 | `orientation` | Heading, roll and pitch from a quaternion, with optional tilt limits; an exactly-zero orientation shows as NOT INITIALIZED | `field` (`pose.pose.orientation`), `heading` (`compass`: 0 = North, or `enu`), `warn_tilt_deg`, `error_tilt_deg`, `identity_means_uninitialized` (true) |
 | `joystick` | A joy topic that publishes even with no controller; connected is read from axes that rest away from 0 only when one is attached | `connected_axes` (`[2, 5]`, the PS4 triggers), `timeout_s` |
 | `imu` | `sensor_msgs/Imu` rate, plus readings that aren't all zero and measure gravity | `expected_hz`, `gravity_check` (true), `gravity_tolerance` (3 m/s²) |

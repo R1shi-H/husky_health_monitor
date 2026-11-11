@@ -109,10 +109,11 @@ def _float(value):
     return None if value is None else float(value)
 
 
-def _level(spec, key, default):
+def _level(spec, key, default, allowed=(WARN, ERROR)):
     level = spec.get(key, default)
-    if level not in (WARN, ERROR):
-        raise ConfigError(f'{key} must be "warn" or "error", got {level!r}')
+    if level not in allowed:
+        choices = ' or '.join(f'"{a}"' for a in allowed)
+        raise ConfigError(f'{key} must be {choices}, got {level!r}')
     return level
 
 
@@ -417,7 +418,8 @@ class BoolCheck(TopicCheck):
         self.field = spec.get('field', 'data')
         ok_value = spec.get('ok_value', True)
         self.ok_value = None if ok_value == 'any' else bool(ok_value)  # any: just report it
-        self.bad_level = _level(spec, 'bad_level', WARN)
+        # idle: show the other value in gray, e.g. a link that's only sometimes used
+        self.bad_level = _level(spec, 'bad_level', WARN, allowed=(IDLE, WARN, ERROR))
         self.bad_detail = spec.get('bad_detail', '')
         self.true_label = str(spec.get('true_label', 'TRUE'))
         self.false_label = str(spec.get('false_label', 'FALSE'))
@@ -622,12 +624,15 @@ class DiagnosticsCheck(TopicCheck):
             level = _as_int(msg.level)
             return Result(self._map(level), DIAG_NAMES.get(level, str(level)), msg.message)
 
-        entries = [(s.name, _as_int(s.level), s.message) for s in msg.status
-                   if any(fnmatch.fnmatchcase(s.name, p) for p in self.include)
-                   and not any(fnmatch.fnmatchcase(s.name, p) for p in self.exclude)]
-        names = [name for name, _, _ in entries]
-        # The aggregator publishes parents (/Platform) and children (/Platform/Battery); judge leaves
-        leaves = [e for e in entries if not any(n.startswith(e[0] + '/') for n in names)]
+        included = [s for s in msg.status
+                    if any(fnmatch.fnmatchcase(s.name, p) for p in self.include)]
+        names = [s.name for s in included]
+        # The aggregator publishes parents (/Platform) and children (/Platform/Battery); judge
+        # leaves. Excluded children still count as children, or their parent, which carries
+        # their level, would take their place.
+        leaves = [(s.name, _as_int(s.level), s.message) for s in included
+                  if not any(n.startswith(s.name + '/') for n in names)
+                  and not any(fnmatch.fnmatchcase(s.name, p) for p in self.exclude)]
         bad = [e for e in leaves if e[1] != DIAG_OK]
         if not bad:
             return Result(OK, 'OK', f'{len(leaves)} entries')

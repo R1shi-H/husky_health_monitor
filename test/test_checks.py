@@ -179,6 +179,29 @@ def test_diagnostics_array_uses_leaves():
     assert [item['name'] for item in result.items] == ['/Platform/Motors']
 
 
+def test_diagnostics_exclude_does_not_promote_parents():
+    check = make({'name': 'Diag', 'type': 'diagnostics', 'topic': 'diagnostics_agg',
+                  'exclude': ['*MCU Firmware Version*']})
+    status = [Msg(name='/Platform', level=b'\x01', message=''),
+              Msg(name='/Platform/MCU', level=b'\x01', message=''),
+              Msg(name='/Platform/MCU/updater: MCU Firmware Version', level=b'\x01',
+                  message='New firmware available'),
+              Msg(name='/Platform/Battery', level=b'\x00', message='OK')]
+    check.on_message(0.0, Msg(status=status))
+    result = check.evaluate(Context(now=0.1))
+    assert (result.level, result.value) == (OK, 'OK')
+
+
+def test_bool_idle_level():
+    check = make({'name': 'Wi-Fi', 'type': 'bool', 'topic': 'wifi', 'false_label': 'DISCONNECTED',
+                  'bad_level': 'idle'})
+    check.on_message(0.0, Msg(data=False))
+    result = check.evaluate(Context(now=0.1))
+    assert (result.level, result.value) == (IDLE, 'DISCONNECTED')
+    with pytest.raises(ConfigError):
+        make({'name': 'Bad', 'type': 'diagnostics', 'topic': 'd', 'stale_level': 'idle'})
+
+
 def test_node_patterns():
     check = make({'name': 'ATAK', 'type': 'node', 'node': '*atak*'})
     found = check.evaluate(Context(now=10, graph=GraphInfo(nodes={'/a300_00095/atak_bridge'})))

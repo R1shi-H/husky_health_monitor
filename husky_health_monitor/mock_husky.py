@@ -175,9 +175,13 @@ class MockHusky(Node):
 
     def diagnostics(self):
         motor_warn = 'diagnostics' in self.faults
-        entries = [('/Platform', 1 if motor_warn else 0, ''),
+        # Like the real robot, the MCU always warns that newer firmware exists (the monitor's
+        # config excludes it), so /Platform and /Platform/MCU are always WARN
+        entries = [('/Platform', 1, ''),
                    ('/Platform/Battery', 0, 'OK'),
-                   ('/Platform/MCU', 0, 'OK'),
+                   ('/Platform/MCU', 1, ''),
+                   ('/Platform/MCU/clearpath_diagnostic_updater: MCU Firmware Version', 1,
+                    'New firmware available: (3.0.3) -> (3.0.5). Restart service to re-evaluate.'),
                    ('/Platform/Motors', 1 if motor_warn else 0,
                     'Front left motor driver temperature high' if motor_warn else 'OK'),
                    ('/Sensors', 0, ''),

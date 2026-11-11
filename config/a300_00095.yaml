@@ -218,13 +218,15 @@ groups:
         host: 1.1.1.1
         warn_ms: 250
         missing_level: warn
+      # Outdoors the robot talks over the Doodle Labs radio with Wi-Fi off, so no Wi-Fi is
+      # shown in gray rather than as a warning
       - name: Wi-Fi
         type: bool
         topic: platform/wifi_connected
         ok_value: true
         true_label: CONNECTED
         false_label: DISCONNECTED
-        bad_level: warn
+        bad_level: idle
         critical: false
       # The radio's USB network interface (enx + its MAC address) exists only while the radio
       # is connected; its br0 address is permanent, so it can't be used. Matched by the
@@ -254,6 +256,9 @@ groups:
         topic: diagnostics_agg
         expected_hz: 1
         critical: false
+        # Always-on warnings that aren't faults: the MCU firmware update notice, and the
+        # Wi-Fi monitor (Wi-Fi has its own check, and is off outdoors)
+        exclude: ['*MCU Firmware Version*', '*Wi-Fi Monitor*']
         description: Clearpath's own diagnostic aggregator, reduced to its worst entries.
       - name: TF
         type: rate
