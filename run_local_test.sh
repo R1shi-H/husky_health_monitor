@@ -5,7 +5,8 @@
 #   ~/health_ws/src/husky_health_monitor/run_local_test.sh gps_1,low_battery   # with faults
 #
 # Then open http://localhost:8088. Ctrl-C stops both.
-# Faults: low_battery estop gps_1 no_fix slow_imu rear_camera joystick tilt diagnostics
+# Faults: low_battery estop gps_1 no_fix rtk_float slow_imu imu_zeros rear_camera joystick ps4
+#         tilt diagnostics
 # To fail a systemd service as well:
 #   HUSKY_HEALTH_FAILED_SERVICES=mors@atak_bridge.service ~/health_ws/src/husky_health_monitor/run_local_test.sh
 

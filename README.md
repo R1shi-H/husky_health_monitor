@@ -7,7 +7,8 @@ systemd units), the network, ROS itself and the onboard computer. It reports eac
 **Healthy / Warning / Error** in three places:
 
 - a **web dashboard** at `http://<robot>:8088`, viewable over Tailscale
-- a **terminal readout** (`health_status`), styled after `voxl-inspect-services`
+- a **terminal readout** (`health`, see [A short `health` command](#a-short-health-command)),
+  styled after `voxl-inspect-services`
 - a `diagnostic_msgs/DiagnosticArray` on `/a300_00095/health_monitor/status`
   (works with `rqt_robot_monitor` and Foxglove)
 
@@ -39,7 +40,8 @@ GPS 1                           ⚠ 5.0 Hz · RTK FLOAT
 OVERALL SYSTEM STATUS:          ⚠ WARNING
 ```
 
-Add `--details` (`-d`) to see the reason under each warning or error. The dashboard
+The snapshot is bare by default: one line per check and the overall status. Add
+`--details` (`-d`) to see the reason under each warning or error. The dashboard
 groups the same checks into cards: Power & Safety, Drive System, Positioning,
 Perception, Operator Control, Mission Services, Network, and ROS & Diagnostics, with the
 onboard computer's CPU, memory, disk and temperature as tiles at the top and the
@@ -133,7 +135,8 @@ from scripts, e.g. a pre-mission check.
 
 ## Notes from testing on a300_00095
 
-Things the config accounts for, from testing on the robot (2026-11-09) and Daylan's review:
+Things the config accounts for, from testing on the robot (2026-11-09 and 2026-11-12) and
+Daylan's review:
 
 - The EKF is disabled, so `platform/odom_filtered` has no publisher; Wheel odometry
   watches `platform/odom`, which uses transient-local QoS but streams at 50 Hz.
@@ -160,6 +163,22 @@ Things the config accounts for, from testing on the robot (2026-11-09) and Dayla
   controller manager's "high execution jitter" warning is real timing data and is still
   shown; add `'*Hardware Components Activity*'` to `exclude` if it turns out to be constant.
 - Not monitored, by request: the 2D lidar, the INS's raw IMU, localization, and cmd_vel.
+
+### What to expect indoors
+
+Indoors the overall status is **ERROR** even when nothing is wrong. Seen on 2026-11-12,
+indoors, charging, with the e-stop engaged:
+
+| Check | Shows | Why |
+|---|---|---|
+| GPS 0, GPS 1 | ✗ NO FIX | No satellites indoors. This alone makes the overall status ERROR |
+| IMU orientation | ⚠ NOT INITIALIZED | The INS publishes all zeros until it has a fix |
+| Emergency stop | ⚠ ENGAGED | E-stop pressed |
+| Clearpath diagnostics | ⚠ several WARN | The Lynx motor drivers report "E-stopped" (and "Frequency too low") while the e-stop is engaged |
+| Doodle Labs radio | ⚠ NOT CONNECTED | Whenever the radio isn't connected to the robot |
+| Wi-Fi, PS4 and GCS controllers | ○ gray | Off or not connected; gray never counts against the overall status |
+
+Anything else that isn't green indoors is worth a look.
 
 ## Develop without the robot
 
