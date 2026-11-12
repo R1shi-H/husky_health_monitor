@@ -136,7 +136,7 @@ from scripts, e.g. a pre-mission check.
 ## Notes from testing on a300_00095
 
 Things the config accounts for, from testing on the robot (2026-11-09 and 2026-11-12) and
-Daylan's review:
+team review:
 
 - The EKF is disabled, so `platform/odom_filtered` has no publisher; Wheel odometry
   watches `platform/odom`, which uses transient-local QoS but streams at 50 Hz.

@@ -30,7 +30,7 @@ history:
 groups:
   # Groups are ordered by how much the operator cares: can it drive safely, does it know
   # where it is, can it see, can we control it, is the mission software up, can we reach it.
-  # Checks follow Daylan's review of 2026-11-10.
+  # Checks follow the team review of 2026-11-10.
 
   - name: Power & Safety
     checks:
