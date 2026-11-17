@@ -64,8 +64,13 @@ class SystemSampler:
     @staticmethod
     def _interfaces():
         addrs = psutil.net_if_addrs()
+        counters = psutil.net_io_counters(pernic=True)
         interfaces = {}
         for name, stats in psutil.net_if_stats().items():
             ipv4 = next((a.address for a in addrs.get(name, []) if a.family == socket.AF_INET), '')
             interfaces[name] = {'up': stats.isup, 'ipv4': ipv4}
+            io = counters.get(name)
+            if io:  # bytes and packets since boot, for the traffic checks
+                interfaces[name].update(bytes_sent=io.bytes_sent, bytes_recv=io.bytes_recv,
+                                        packets_sent=io.packets_sent, packets_recv=io.packets_recv)
         return interfaces

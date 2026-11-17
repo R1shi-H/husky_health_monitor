@@ -85,7 +85,9 @@ groups:
         field: pose.pose.orientation
         heading: compass        # 0 = North, 90 = East, 180 = South, 270 = West
         expected_hz: 5
-        warn_tilt_deg: 25       # tune or remove once we know what the Husky normally sees
+        # Green while real values keep arriving and changing; red when they're all 0 (INS not
+        # initialized) or stop changing. No tilt warning, so it stays green for integrations.
+        frozen_s: 10
         show_detail: true       # roll and pitch under the heading
       # status.status: 2 RTK FIXED (green), 1 RTK FLOAT (yellow), 0 GNSS FIX and -1 NO FIX (red)
       - name: GPS 0
@@ -106,6 +108,9 @@ groups:
         expected_hz: 50
         warn_below_hz: 40
         error_below_hz: 25
+        # Red when every reading is 0 or the readings stop changing; no yellow gravity warning
+        gravity_check: false
+        frozen_s: 10
 
   - name: Perception
     checks:
@@ -170,6 +175,13 @@ groups:
         idle_ok: true
         ok_label: CONNECTED
         idle_label: NOT CONNECTED
+      - name: Steam Deck 3
+        type: rate
+        topic: operators/steamdeck_3/joy
+        timeout_s: 2
+        idle_ok: true
+        ok_label: CONNECTED
+        idle_label: NOT CONNECTED
       # MORS Code services run as systemd units (mors@<name>.service)
       - name: Velocity mux
         type: systemd
@@ -211,23 +223,14 @@ groups:
         unit: tailscaled.service
         status_ok: [Connected]  # tailscaled can be running but logged out or stopped
         missing_level: warn
-      # Internet: can the robot reach the internet over any link. Wi-Fi: is its Wi-Fi
-      # client connected to a network.
+      # Can the robot reach the internet over any link. Over the 5G modem round trips of up
+      # to 500 ms are normal, so it only warns above 1 s.
       - name: Internet
         type: ping
         host: 1.1.1.1
-        warn_ms: 250
+        warn_ms: 1000
+        timeout_s: 3
         missing_level: warn
-      # Outdoors the robot talks over the Doodle Labs radio with Wi-Fi off, so no Wi-Fi is
-      # shown in gray rather than as a warning
-      - name: Wi-Fi
-        type: bool
-        topic: platform/wifi_connected
-        ok_value: true
-        true_label: CONNECTED
-        false_label: DISCONNECTED
-        bad_level: idle
-        critical: false
       # The radio's USB network interface (enx + its MAC address) exists only while the radio
       # is connected; its br0 address is permanent, so it can't be used. Matched by the
       # radio's MAC prefix so a replacement radio is still found.
@@ -238,6 +241,20 @@ groups:
         ok_label: CONNECTED
         missing_label: NOT CONNECTED
         missing_level: warn
+      # Data sent (up) and received (down) per interface, like a packet capture's totals.
+      # Video to the ground station leaves over Tailscale (riding the 5G modem) or the radio,
+      # so each extra stream the ground station opens shows up here. Informational: these
+      # only warn if warn_tx_mbps / warn_rx_mbps are set.
+      - name: Tailscale traffic
+        type: traffic
+        interface: tailscale0
+      - name: Radio traffic
+        type: traffic
+        interface: 'enx00301a*'
+      # The 5G modem's own interface; find its name with `ip -br link` on the robot
+      # - name: 5G modem traffic
+      #   type: traffic
+      #   interface: wwan0
       # Uncomment once you know the ground station's address (Doodle Labs or Tailscale IP)
       # - name: Ground station link
       #   type: ping
@@ -257,7 +274,7 @@ groups:
         expected_hz: 1
         critical: false
         # Always-on warnings that aren't faults: the MCU firmware update notice, and the
-        # Wi-Fi monitor (Wi-Fi has its own check, and is off outdoors)
+        # Wi-Fi monitor (Wi-Fi was dropped from the checks, by request)
         exclude: ['*MCU Firmware Version*', '*Wi-Fi Monitor*']
         description: Clearpath's own diagnostic aggregator, reduced to its worst entries.
       - name: TF

@@ -9,9 +9,12 @@ Exit code (without --watch): 0 healthy, 1 warning, 2 error, 3 monitor unreachabl
 """
 
 import argparse
+import itertools
 import json
 import os
+import shutil
 import sys
+import textwrap
 import time
 import urllib.error
 import urllib.request
@@ -21,8 +24,11 @@ COLORS = {'ok': '\033[32m', 'idle': '\033[2m', 'waiting': '\033[2m', 'warn': '\0
           'error': '\033[31m'}
 BOLD, DIM, RESET = '\033[1m', '\033[2m', '\033[0m'
 EXIT_CODES = {'ok': 0, 'idle': 0, 'waiting': 0, 'warn': 1, 'error': 2}
-NAME_WIDTH = 32
-WIDTH = 60
+GAP = 4          # spaces between columns
+MIN_COLUMN = 48  # narrowest column; a terminal fits as many as it can, up to MAX_COLUMNS
+MAX_COLUMN = 56
+MAX_COLUMNS = 3
+WIDTH = 60       # the --calibrate table
 
 
 def fetch(url, timeout=3.0):
@@ -30,36 +36,69 @@ def fetch(url, timeout=3.0):
         return json.load(response)
 
 
-def render(snap, color=True, details=False):
+def _fit(text, width):
+    return text if len(text) <= width else text[:max(0, width - 1)] + '…'
+
+
+def render(snap, color=True, details=False, width=None):
+    """Overall status first, then every check, in as many columns as the terminal fits
+    (one in a narrow terminal, up to three). With details, the reason goes under each
+    warning or error."""
     def paint(code, text):
         return f'{code}{text}{RESET}' if color else text
 
-    def row(name, status, level, bold=False):
-        name = name if len(name) <= NAME_WIDTH - 1 else name[:NAME_WIDTH - 2] + '…'
-        code = COLORS[level] + (BOLD if bold else '')
-        return f'{name:<{NAME_WIDTH}}' + paint(code, f'{ICONS[level]} {status}')
+    if width is None:
+        width = shutil.get_terminal_size((80, 24)).columns
+    columns = max(1, min(MAX_COLUMNS, (width + GAP) // (MIN_COLUMN + GAP)))
+    col = width if columns == 1 else min(MAX_COLUMN, (width + GAP) // columns - GAP)
+    name_width = min(24, 1 + max((len(c['name']) for g in snap['groups'] for c in g['checks']),
+                                 default=10))
 
-    stamp = time.strftime('%H:%M:%S', time.localtime(snap['time']))
-    lines = [paint(BOLD, 'HUSKY A300 SYSTEM HEALTH'),
-             paint(DIM, f'{snap["robot"]} on {snap.get("hostname") or "?"} at {stamp}'),
-             '=' * WIDTH]
+    # Lines are (plain, painted) pairs, so columns can be padded by their visible width
+    blocks = []
     for group in snap['groups']:
-        lines.append(paint(BOLD, f'{group["name"].upper():<{NAME_WIDTH}}STATUS'))
-        lines.append('-' * WIDTH)
+        title = group['name'].upper()
+        block = [(title, paint(BOLD, title))]
         for check in group['checks']:
-            lines.append(row(check['name'], check['value'], check['level']))
-            shown = check['level'] in ('warn', 'error') or check.get('show_detail')
+            level = check['level']
+            name = f' {_fit(check["name"], name_width - 1):<{name_width}}'
+            status = _fit(f'{ICONS[level]} {check["value"]}', col - len(name))
+            block.append((name + status, name + paint(COLORS[level], status)))
+            shown = level in ('warn', 'error') or check.get('show_detail')
             if details and shown and check.get('detail'):
-                lines.append(paint(DIM, f'  └ {check["detail"]}'))
-        lines.append('')
+                for line in textwrap.wrap(check['detail'], col - 5, initial_indent='   └ ',
+                                          subsequent_indent='     '):
+                    block.append((line, paint(DIM, line)))
+        blocks.append(block)
+
+    col = min(col, max(len(plain) for block in blocks for plain, _ in block))  # no wider than needed
+    # Keep the groups in order, split where the columns come out closest in height
+    columns = min(columns, len(blocks)) or 1
+    heights = [len(b) for b in blocks]
+    cuts = min(itertools.combinations(range(1, len(blocks)), columns - 1),
+               key=lambda c: max(sum(heights[a:b]) for a, b in zip((0, *c), (*c, len(blocks)))))
+    stacks = [[line for block in blocks[a:b] for line in block]
+              for a, b in zip((0, *cuts), (*cuts, len(blocks)))]
+    body = []
+    for row in itertools.zip_longest(*stacks, fillvalue=('', '')):
+        line = ''
+        for i, (plain, painted) in enumerate(row):
+            pad = ' ' * (col + GAP - len(plain)) if i < len(row) - 1 else ''
+            line += painted + pad
+        body.append(line.rstrip())
+
     overall = snap['overall']
     counts = overall['counts']
-    lines += ['=' * WIDTH,
-              row('OVERALL SYSTEM STATUS:', overall['label'], overall['level'], bold=True),
-              paint(DIM, f'{counts["ok"] + counts["idle"]} healthy · {counts["warn"]} warning · '
-                         f'{counts["error"]} error · {snap["graph"]["nodes"]} nodes / '
-                         f'{snap["graph"]["topics"]} topics visible')]
-    return '\n'.join(lines)
+    level = overall['level']
+    stamp = time.strftime('%H:%M:%S', time.localtime(snap['time']))
+    lines = [paint(BOLD, 'HUSKY A300 HEALTH') +
+             paint(DIM, f'  {snap["robot"]} on {snap.get("hostname") or "?"} · {stamp}'),
+             paint(COLORS[level] + BOLD, f'{ICONS[level]} {overall["label"]}') +
+             paint(DIM, f'  {counts["ok"] + counts["idle"]} healthy · {counts["warn"]} warning · '
+                        f'{counts["error"]} error · {snap["graph"]["nodes"]} nodes / '
+                        f'{snap["graph"]["topics"]} topics'),
+             '']
+    return '\n'.join(lines + body)
 
 
 def _suggest(hz):

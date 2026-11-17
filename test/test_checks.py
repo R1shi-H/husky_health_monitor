@@ -38,6 +38,10 @@ def test_shipped_config_builds():
     ids = [c.id for _, checks in groups for c in checks]
     assert len(ids) == len(set(ids))
     assert any(c.topic == '/a300_00095/platform/bms/state' for _, checks in groups for c in checks)
+    by_name = {c.name: c for _, checks in groups for c in checks}
+    assert 'Wi-Fi' not in by_name
+    assert by_name['Steam Deck 3'].topic == '/a300_00095/operators/steamdeck_3/joy'
+    assert by_name['Internet'].warn_ms == 1000  # 5G modem round trips reach 500 ms
 
 
 def test_describe_does_not_shadow_live_fields():
@@ -412,7 +416,7 @@ def test_orientation_identity_means_not_initialized():
     check = make({'name': 'IMU', 'type': 'orientation', 'topic': 'odom'})
     check.on_message(0.0, odometry(0.0, 0.0, 0.0))
     result = check.evaluate(Context(now=0.1))
-    assert (result.level, result.value) == (WARN, 'NOT INITIALIZED')
+    assert (result.level, result.value) == (ERROR, 'NOT INITIALIZED')
     check.on_message(0.2, odometry(0.0, 0.0, 0.01))
     assert check.evaluate(Context(now=0.3)).level == OK
 
@@ -505,3 +509,97 @@ def test_doodle_radio_interface_by_prefix():
     assert (result.level, result.value) == (WARN, 'NOT CONNECTED')
     simulated = {**absent, 'simulate_missing': True}
     assert check.evaluate(Context(now=0, system=simulated)).level == OK
+
+
+def test_orientation_frozen_is_an_error():
+    check = make({'name': 'IMU', 'type': 'orientation', 'topic': 'odom', 'frozen_s': 2})
+    last = feed(check, 10, 3, msg=odometry(1.0, 2.0, 30.0))
+    result = check.evaluate(Context(now=last + 0.01))
+    assert (result.level, result.value) == (ERROR, 'FROZEN')
+    check.on_message(last + 0.1, odometry(1.0, 2.0, 30.1))
+    assert check.evaluate(Context(now=last + 0.2)).level == OK
+
+
+def test_orientation_has_no_tilt_warning_unless_configured():
+    check = make({'name': 'IMU', 'type': 'orientation', 'topic': 'odom'})
+    check.on_message(0.0, odometry(0.0, 40.0, 10.0))
+    assert check.evaluate(Context(now=0.1)).level == OK
+
+
+def test_imu_frozen_and_gravity_check_off():
+    check = make({'name': 'IMU 0', 'type': 'imu', 'topic': 'imu', 'expected_hz': 50,
+                  'gravity_check': False, 'frozen_s': 2})
+    last = feed(check, 50, 3, msg=imu_msg(1.0))  # odd gravity is fine with the check off...
+    result = check.evaluate(Context(now=last + 0.01))
+    assert (result.level, result.value) == (ERROR, 'FROZEN')  # ...but identical readings aren't
+    check.on_message(last + 0.02, imu_msg(1.01))
+    assert check.evaluate(Context(now=last + 0.03)).level == OK
+
+
+def counters(sent, recv, packets_sent=0, packets_recv=0):
+    return {'up': True, 'ipv4': '', 'bytes_sent': sent, 'bytes_recv': recv,
+            'packets_sent': packets_sent, 'packets_recv': packets_recv}
+
+
+def test_traffic_rates():
+    check = make({'name': 'Tailscale traffic', 'type': 'traffic', 'interface': 'tailscale0'})
+    first = check.evaluate(Context(now=0, system={'interfaces': {'tailscale0': counters(0, 0)}}))
+    assert (first.level, first.value) == (OK, 'MEASURING')
+    # 2 s later: 500 kB sent (2 Mbps), 2.5 kB received (10 kbps)
+    later = {'interfaces': {'tailscale0': counters(500_000, 2_500, 400, 20)}}
+    result = check.evaluate(Context(now=2, system=later))
+    assert (result.level, result.value) == (OK, '↑ 2.0 Mbps · ↓ 10 kbps')
+    assert result.metric == pytest.approx(2.0)
+    assert '200 packets/s' in result.detail
+
+
+def test_traffic_missing_interface_and_limits():
+    check = make({'name': 'Radio traffic', 'type': 'traffic', 'interface': 'enx00301a*',
+                  'warn_tx_mbps': 1})
+    gone = check.evaluate(Context(now=0, system={'interfaces': {'eth0': counters(0, 0)}}))
+    assert (gone.level, gone.value) == (IDLE, 'NO INTERFACE')
+    check.evaluate(Context(now=1, system={'interfaces': {'enx00301aaabbcc': counters(0, 0)}}))
+    busy = {'interfaces': {'enx00301aaabbcc': counters(1_000_000, 0)}}  # 8 Mbps
+    assert check.evaluate(Context(now=2, system=busy)).level == WARN
+    # Counters going backwards (radio re-plugged) start a new measurement
+    replugged = {'interfaces': {'enx00301aaabbcc': counters(10, 0)}}
+    assert check.evaluate(Context(now=3, system=replugged)).value == 'MEASURING'
+
+
+def test_ping_reports_loss():
+    check = make({'name': 'Internet', 'type': 'ping', 'host': '1.1.1.1', 'warn_ms': 1000})
+    for rtt in (40.0, None, 500.0, 60.0):
+        check.record(rtt)
+    result = check.evaluate(Context(now=0))
+    assert (result.level, result.value) == (OK, '60 ms')
+    assert '25% loss over the last 4 pings' in result.detail
+
+
+def snapshot():
+    groups = [{'name': name, 'checks': [{'name': f'{name} check {i}', 'value': 'OK', 'level': 'ok',
+                                         'detail': ''} for i in range(n)]}
+              for name, n in (('Power', 2), ('Drive', 5), ('Sensors', 4), ('Network', 3),
+                              ('Computer', 4))]
+    groups[0]['checks'][1].update(level='warn', value='ENGAGED', detail='e-stop pressed')
+    return {'robot': 'a300_00095', 'hostname': 'husky', 'time': 0, 'groups': groups,
+            'graph': {'nodes': 7, 'topics': 25},
+            'overall': {'level': 'warn', 'label': 'WARNING',
+                        'counts': {'ok': 13, 'idle': 0, 'warn': 1, 'error': 0}}}
+
+
+def test_cli_columns_follow_terminal_width():
+    from husky_health_monitor.cli import render
+    wide = render(snapshot(), color=False, width=120).splitlines()
+    narrow = render(snapshot(), color=False, width=70).splitlines()
+    assert wide[1].startswith('⚠ WARNING')  # overall status on top
+    assert len(wide) < len(narrow)
+    assert any('POWER' in line and 'SENSORS' in line for line in wide)
+    for text in (wide, narrow):
+        assert all(f'Computer check {i}' in '\n'.join(text) for i in range(4))
+        assert max(len(line) for line in text) <= (120 if text is wide else 70)
+    # Notes only with details, and only under warnings or errors
+    assert 'e-stop pressed' not in '\n'.join(wide)
+    assert 'e-stop pressed' in render(snapshot(), color=False, details=True, width=120)
+    # A wide screen (like the robot's maximized terminal) gets three columns
+    widest = render(snapshot(), color=False, width=190).splitlines()
+    assert len(widest) < len(wide)

@@ -39,10 +39,12 @@ FAULTS = {
     'rtk_float': 'GPS 1 drops to RTK float',
     'slow_imu': 'IMU 0 drops to 20 Hz',
     'imu_zeros': 'IMU 0 publishes all-zero readings',
+    'imu_frozen': 'IMU 0 repeats the same reading',
+    'ins_zeros': 'the INS orientation is all zeros (not initialized)',
+    'ins_frozen': 'the INS orientation stops changing',
     'rear_camera': 'rear OAK-D stops publishing',
     'joystick': 'GCS PS5 controller disconnected',
     'ps4': 'onboard PS4 controller not connected',
-    'tilt': 'robot pitched 30 degrees (steep slope)',
     'diagnostics': 'Clearpath diagnostics report a motor warning',
 }
 
@@ -56,7 +58,6 @@ class MockHusky(Node):
 
         self.stream('platform/bms/state', BatteryState, 1, self.battery)
         self.stream('platform/emergency_stop', Bool, 1, lambda: Bool(data='estop' in faults))
-        self.stream('platform/wifi_connected', Bool, 1, lambda: Bool(data=True))
         self.stream('platform/mcu/status', Header, 1, self.header)
         self.stream('platform/motors/feedback', Header, 50, self.header)
         # The real platform/odom streams with transient-local QoS, so the mock does too
@@ -83,7 +84,7 @@ class MockHusky(Node):
 
         # The onboard PS4 joy node publishes whether or not a controller is attached
         self.stream('joy_teleop/joy', Joy, 20, lambda: self.ps4('ps4' not in faults))
-        # GCS PS5 and Steam Deck 1 connected, Steam Deck 2 not
+        # GCS PS5 and Steam Deck 1 connected, Steam Decks 2 and 3 not
         if 'joystick' not in faults:
             self.stream('operators/gcs_ps5/joy', Joy, 20, self.joy)
         self.stream('operators/steamdeck_1/joy', Joy, 20, self.joy)
@@ -129,14 +130,16 @@ class MockHusky(Node):
         return msg
 
     def odom(self):
-        # Turning slowly in place, slightly nose-up; 'tilt' puts it on a steep slope
-        yaw = math.radians((self.elapsed() * 3) % 360 - 180)
-        pitch = math.radians(30.0 if 'tilt' in self.faults else 2.0)
+        msg = Odometry(header=self.header(), child_frame_id='base_link')
+        if 'ins_zeros' in self.faults:
+            return msg  # identity orientation, as the INS publishes before it initializes
+        # Turning slowly in place, slightly nose-up; 'ins_frozen' holds it still
+        yaw = math.radians(30.0 if 'ins_frozen' in self.faults else (self.elapsed() * 3) % 360 - 180)
+        pitch = math.radians(2.0)
         roll = math.radians(-1.0)
         cr, sr = math.cos(roll / 2), math.sin(roll / 2)
         cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
         cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
-        msg = Odometry(header=self.header(), child_frame_id='base_link')
         q = msg.pose.pose.orientation
         q.w = cr * cp * cy + sr * sp * sy
         q.x = sr * cp * cy - cr * sp * sy
@@ -158,7 +161,9 @@ class MockHusky(Node):
 
     def imu(self):
         msg = Imu(header=self.header())
-        if 'imu_zeros' not in self.faults:
+        if 'imu_frozen' in self.faults:
+            msg.linear_acceleration.z = 9.81  # the same reading every time
+        elif 'imu_zeros' not in self.faults:
             # Level and still: gravity on z, a little sensor noise
             msg.linear_acceleration.z = 9.81 + random.uniform(-0.05, 0.05)
             msg.angular_velocity.z = random.uniform(-0.002, 0.002)

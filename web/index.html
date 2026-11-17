@@ -306,13 +306,14 @@ function unitFor(c) {
   if (c.kind === 'battery') return '%';
   if (c.kind === 'system') return c.system_metric === 'temperature' ? ' °C' : '%';
   if (c.kind === 'ping') return ' ms';
+  if (c.kind === 'traffic') return ' Mbps';
   if (c.kind === 'orientation') return '°';
   return '';
 }
 function metricLabel(c) {
   return { rate: 'Message rate', navsat: 'Message rate', imu: 'Message rate', battery: 'Charge', system: c.system_metric === 'temperature' ? 'Temperature' : 'Usage',
            ping: 'Round trip', node: 'Matching nodes', bool: 'Value (1 = true)', ros_graph: 'Nodes visible', field: 'Value',
-           orientation: 'Tilt (larger of roll and pitch)' }[c.kind] || 'Value';
+           orientation: 'Tilt (larger of roll and pitch)', traffic: 'Data sent' }[c.kind] || 'Value';
 }
 function yMaxFor(c, values) {
   const max = Math.max(0, ...values.filter(v => v != null && isFinite(v)));
@@ -388,7 +389,7 @@ function linePaths(ts, vs, xOf, yOf, base) {
 
 // Draws a single-series line chart into svg; axes=true adds y labels and an expected-rate line.
 // Kinds whose value has a trend worth a row sparkline (on/off and running/stopped rows get none)
-const SPARK_KINDS = new Set(['rate', 'navsat', 'imu', 'battery', 'orientation', 'ping', 'field', 'system']);
+const SPARK_KINDS = new Set(['rate', 'navsat', 'imu', 'battery', 'orientation', 'ping', 'field', 'system', 'traffic']);
 const RATE_KINDS = new Set(['rate', 'navsat', 'imu']);
 
 function drawSeries(svg, check, spanS, axes, wash = true) {
@@ -642,6 +643,9 @@ function renderDetail(el, c) {
   if (c.warn_below_percent != null) kv.push(['Thresholds', `warn < ${c.warn_below_percent}%, error < ${c.error_below_percent}%`]);
   if (c.warn_above != null) kv.push(['Thresholds', `warn > ${c.warn_above}${unitFor(c)}, error > ${c.error_above}${unitFor(c)}`]);
   if (c.host) kv.push(['Host', `<code>${esc(c.host)}</code>`, true]);
+  if (c.warn_ms != null) kv.push(['Threshold', `warn > ${fmtNum(c.warn_ms)} ms`]);
+  if (c.interface) kv.push(['Interface', `<code>${esc(c.interface)}</code>`, true]);
+  if (c.frozen_s != null) kv.push(['Frozen', `error after ${fmtNum(c.frozen_s)} s of identical readings`]);
   if (c.unit) kv.push(['Service', `<code>${esc(c.unit)}</code>` + (c.user ? ' (user unit)' : ''), true]);
   if (c.warn_tilt_deg != null || c.error_tilt_deg != null) {
     kv.push(['Tilt limits', [c.warn_tilt_deg != null && `warn > ${c.warn_tilt_deg}°`, c.error_tilt_deg != null && `error > ${c.error_tilt_deg}°`].filter(Boolean).join(', ')]);

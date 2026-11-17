@@ -71,6 +71,16 @@ def fmt_hz(hz):
     return f'{hz:.0f} Hz' if hz >= 20 else f'{hz:.1f} Hz'
 
 
+def fmt_bitrate(bps):
+    if bps >= 100e6:
+        return f'{bps / 1e6:.0f} Mbps'
+    if bps >= 1e6:
+        return f'{bps / 1e6:.1f} Mbps'
+    if bps >= 1e3:
+        return f'{bps / 1e3:.0f} kbps'
+    return f'{bps:.0f} bps'
+
+
 def slug(text):
     return re.sub(r'[^a-z0-9]+', '_', text.lower()).strip('_')
 
@@ -115,6 +125,27 @@ def _level(spec, key, default, allowed=(WARN, ERROR)):
         choices = ' or '.join(f'"{a}"' for a in allowed)
         raise ConfigError(f'{key} must be {choices}, got {level!r}')
     return level
+
+
+class FreezeWatch:
+    """Notices a sensor that keeps publishing but whose values stopped changing. Real sensors
+    always have some noise, so identical readings for several seconds mean a stuck driver."""
+
+    def __init__(self, limit_s):
+        self.limit_s = limit_s
+        self.values = None
+        self.changed_at = None
+
+    def update(self, now, values):
+        if values != self.values:
+            self.values, self.changed_at = values, now
+
+    def frozen_for(self, now):
+        """Seconds the values have been unchanged, once that's past the limit; else None."""
+        if self.limit_s is None or self.changed_at is None:
+            return None
+        age = now - self.changed_at
+        return age if age > self.limit_s else None
 
 
 def _join(*parts):
@@ -452,16 +483,30 @@ class OrientationCheck(TopicCheck):
         self.heading = spec.get('heading', 'compass')
         if self.heading not in ('compass', 'enu'):
             raise ConfigError(f'{group} / {self.name}: heading must be compass or enu')
+        self.freeze = FreezeWatch(_float(spec.get('frozen_s')))
+
+    def on_message(self, now, msg=None, nbytes=0):
+        super().on_message(now, msg, nbytes)
+        if msg is not None:
+            try:
+                q = get_field(msg, self.field)
+                self.freeze.update(now, (q.x, q.y, q.z, q.w))
+            except (AttributeError, KeyError, IndexError, TypeError):
+                pass  # judge() reports the bad field
 
     def judge(self, ctx, hz):
         q = get_field(self.last_msg, self.field)
         x, y, z, w = float(q.x), float(q.y), float(q.z), float(q.w)
         norm = math.sqrt(x * x + y * y + z * z + w * w)
         if not math.isfinite(norm) or norm < 1e-6:
-            return Result(WARN, 'NO ORIENTATION', 'quaternion is empty (sensor not initialised?)')
+            return Result(ERROR, 'NO ORIENTATION', 'quaternion is empty (sensor not initialised?)')
         if self.identity_uninitialized and x == y == z == 0.0:
-            return Result(WARN, 'NOT INITIALIZED', 'orientation is exactly 0° on every axis; '
-                                                  'the INS has likely not initialized (no GNSS fix?)')
+            return Result(ERROR, 'NOT INITIALIZED', 'orientation is exactly 0° on every axis; '
+                                                   'the INS has likely not initialized (no GNSS fix?)')
+        frozen = self.freeze.frozen_for(ctx.now)
+        if frozen is not None:
+            return Result(ERROR, 'FROZEN', f'still publishing, but the orientation hasn\'t '
+                                           f'changed in {frozen:.0f} s')
         x, y, z, w = x / norm, y / norm, z / norm, w / norm
         roll = math.degrees(math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y)))
         pitch = math.degrees(math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x)))))
@@ -480,7 +525,8 @@ class OrientationCheck(TopicCheck):
 
     def describe(self):
         return {**super().describe(), 'warn_tilt_deg': self.warn_tilt,
-                'error_tilt_deg': self.error_tilt, 'heading': self.heading}
+                'error_tilt_deg': self.error_tilt, 'heading': self.heading,
+                'frozen_s': self.freeze.limit_s}
 
 
 def _cardinal(heading):
@@ -521,8 +567,9 @@ GRAVITY = 9.81
 
 class ImuCheck(TopicCheck):
     """sensor_msgs/Imu: rate plus a check that the readings are real. A working IMU measures
-    gravity (about 9.8 m/s^2); one that reads all zeros isn't producing data. Acceleration is
-    smoothed so bumps while driving don't trip the gravity check."""
+    gravity (about 9.8 m/s^2); one that reads all zeros, or the same values over and over,
+    isn't producing data. Acceleration is smoothed so bumps while driving don't trip the
+    gravity check."""
 
     kind = 'imu'
     needs_message = True
@@ -531,27 +578,34 @@ class ImuCheck(TopicCheck):
         super().__init__(spec, group, namespace)
         self.gravity_check = bool(spec.get('gravity_check', True))
         self.tolerance = float(spec.get('gravity_tolerance', 3.0))
+        self.freeze = FreezeWatch(_float(spec.get('frozen_s')))
         self.accel = None
 
     def on_message(self, now, msg=None, nbytes=0):
         super().on_message(now, msg, nbytes)
         if msg is not None:
-            a = msg.linear_acceleration
+            a, w = msg.linear_acceleration, msg.angular_velocity
             magnitude = math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z)
             self.accel = magnitude if self.accel is None else 0.9 * self.accel + 0.1 * magnitude
+            self.freeze.update(now, (a.x, a.y, a.z, w.x, w.y, w.z))
 
     def judge(self, ctx, hz):
         a, w = self.last_msg.linear_acceleration, self.last_msg.angular_velocity
         value = fmt_hz(hz) if self.tracker.total >= 3 else 'OK'
         if all(v == 0.0 for v in (a.x, a.y, a.z, w.x, w.y, w.z)):
             return Result(ERROR, 'ALL ZEROS', 'the IMU publishes, but every reading is 0', hz)
+        frozen = self.freeze.frozen_for(ctx.now)
+        if frozen is not None:
+            return Result(ERROR, 'FROZEN', f'still publishing, but the readings haven\'t '
+                                           f'changed in {frozen:.0f} s', hz)
         if self.gravity_check and abs(self.accel - GRAVITY) > self.tolerance:
             return Result(WARN, value, f'acceleration {self.accel:.1f} m/s², expected about '
                                        f'{GRAVITY:.1f} (gravity)', hz)
         return Result(OK, value, f'|a| {self.accel:.2f} m/s²', hz)
 
     def describe(self):
-        return {**super().describe(), 'gravity_check': self.gravity_check}
+        return {**super().describe(), 'gravity_check': self.gravity_check,
+                'frozen_s': self.freeze.limit_s}
 
 
 class FieldCheck(TopicCheck):
@@ -812,6 +866,67 @@ class InterfaceCheck(Check):
                 'require_ipv4': self.require_ipv4}
 
 
+class TrafficCheck(Check):
+    """Data sent and received on a network interface, like a packet capture's totals: e.g.
+    tailscale0, or a radio's USB interface. A glob matching several interfaces sums them.
+    Informational by default; it only warns when warn_tx_mbps or warn_rx_mbps is set."""
+
+    kind = 'traffic'
+    COUNTERS = ('bytes_sent', 'bytes_recv', 'packets_sent', 'packets_recv')
+
+    def __init__(self, spec, group, namespace):
+        super().__init__(spec, group, namespace)
+        if not spec.get('interface'):
+            raise ConfigError(f'{group} / {self.name}: traffic checks need an interface name')
+        self.interface = spec['interface']
+        self.critical = bool(spec.get('critical', False))  # informational
+        self.window_s = float(spec.get('window_s', 5.0))
+        self.warn_tx_mbps = _float(spec.get('warn_tx_mbps'))
+        self.warn_rx_mbps = _float(spec.get('warn_rx_mbps'))
+        self.samples = deque()  # (time, interface names, counter totals)
+
+    def evaluate(self, ctx):
+        interfaces = ctx.system.get('interfaces')
+        if interfaces is None:
+            return Result(IDLE, 'N/A', 'interface info not available (install python3-psutil)')
+        names = sorted(n for n in interfaces
+                       if fnmatch.fnmatchcase(n, self.interface) and 'bytes_sent' in interfaces[n])
+        if not names:
+            self.samples.clear()
+            return Result(IDLE, self.missing_label or 'NO INTERFACE',
+                          f'no interface matching {self.interface}')
+        totals = tuple(sum(interfaces[n][key] for n in names) for key in self.COUNTERS)
+        # Start over when the interface set changes or counters go backwards (re-plugged)
+        if self.samples and (self.samples[-1][1] != names or
+                             any(t < p for t, p in zip(totals, self.samples[-1][2]))):
+            self.samples.clear()
+        self.samples.append((ctx.now, names, totals))
+        while len(self.samples) > 2 and ctx.now - self.samples[1][0] >= self.window_s:
+            self.samples.popleft()
+        if len(self.samples) < 2:
+            return Result(OK, 'MEASURING', ', '.join(names))
+        start, _, first = self.samples[0]
+        dt = ctx.now - start
+        if dt <= 0:
+            return Result(OK, 'MEASURING', ', '.join(names))
+        tx_bps, rx_bps, tx_pps, rx_pps = ((now - then) / dt for now, then in zip(totals, first))
+        tx_bps, rx_bps = tx_bps * 8, rx_bps * 8
+        value = f'↑ {fmt_bitrate(tx_bps)} · ↓ {fmt_bitrate(rx_bps)}'
+        detail = (f'{", ".join(names)} · sent {tx_pps:.0f} packets/s, '
+                  f'received {rx_pps:.0f} packets/s')
+        level = OK
+        for limit, bps, label in ((self.warn_tx_mbps, tx_bps, 'sending'),
+                                  (self.warn_rx_mbps, rx_bps, 'receiving')):
+            if limit is not None and bps > limit * 1e6:
+                level = WARN
+                detail = _join(f'{label} more than {limit:g} Mbps', detail)
+        return Result(level, value, detail, tx_bps / 1e6)
+
+    def describe(self):
+        return {**super().describe(), 'interface': self.interface,
+                'warn_tx_mbps': self.warn_tx_mbps, 'warn_rx_mbps': self.warn_rx_mbps}
+
+
 class PingCheck(Check):
     """A host answers ping. The monitor node runs the pings on a background thread."""
 
@@ -827,10 +942,12 @@ class PingCheck(Check):
         self.warn_ms = float(spec.get('warn_ms', 250))
         self.rtt_ms = None
         self.attempts = 0
+        self.recent = deque(maxlen=int(spec.get('loss_window', 20)))  # answered or not
 
     def record(self, rtt_ms):
         self.rtt_ms = rtt_ms
         self.attempts += 1
+        self.recent.append(rtt_ms is not None)
 
     def evaluate(self, ctx):
         if self.attempts == 0:
@@ -838,9 +955,12 @@ class PingCheck(Check):
         if self.rtt_ms is None:
             return self.missing('UNREACHABLE', f'{self.host} did not answer within {self.timeout_s:g} s')
         value = f'{self.rtt_ms:.0f} ms'
+        lost = 100.0 * self.recent.count(False) / len(self.recent)
+        loss = f'{lost:.0f}% loss over the last {len(self.recent)} pings'
         if self.rtt_ms > self.warn_ms:
-            return Result(WARN, value, f'{self.host} slower than {self.warn_ms:g} ms', self.rtt_ms)
-        return Result(OK, value, self.host, self.rtt_ms)
+            return Result(WARN, value, _join(f'{self.host} slower than {self.warn_ms:g} ms', loss),
+                          self.rtt_ms)
+        return Result(OK, value, _join(self.host, loss), self.rtt_ms)
 
     def describe(self):
         return {**super().describe(), 'host': self.host, 'warn_ms': self.warn_ms}
@@ -913,7 +1033,7 @@ CHECK_TYPES = {cls.kind: cls for cls in (
     RateCheck, BatteryCheck, NavSatCheck, BoolCheck, OrientationCheck, JoystickCheck,
     ImuCheck, FieldCheck,
     DiagnosticsCheck, NodeCheck, TopicGraphCheck, RosGraphCheck, SystemCheck, InterfaceCheck,
-    PingCheck, SystemdCheck,
+    TrafficCheck, PingCheck, SystemdCheck,
 )}
 
 

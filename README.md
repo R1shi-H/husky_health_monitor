@@ -16,31 +16,26 @@ Every check is defined in a YAML file, so adding a sensor or node means adding a
 lines of config, not code.
 
 ```
-HUSKY A300 SYSTEM HEALTH
-a300_00095 on cpr-a300-00095 at 16:32:58
-============================================================
-POWER & SAFETY                  STATUS
-------------------------------------------------------------
-Battery                         ✓ 52%
-Emergency stop                  ⚠ ENGAGED
+HUSKY A300 HEALTH  a300_00095 on cpr-a300-00095 · 16:32:58
+⚠ WARNING  34 healthy · 2 warning · 0 error · 101 nodes / 350 topics
 
-DRIVE SYSTEM                    STATUS
-------------------------------------------------------------
-MCU                             ✓ 1.0 Hz
-Motor drivers                   ✓ 50 Hz
-Wheel odometry                  ✓ 50 Hz
-...
-POSITIONING                     STATUS
-------------------------------------------------------------
-IMU orientation                 ✓ heading 214° SW
-GPS 0                           ✓ 5.0 Hz · RTK FIXED
-GPS 1                           ⚠ 5.0 Hz · RTK FLOAT
-...
-============================================================
-OVERALL SYSTEM STATUS:          ⚠ WARNING
+POWER & SAFETY                                  OPERATOR CONTROL
+ Battery            ✓ 52%                        PS4 controller     ✓ CONNECTED
+ Emergency stop     ⚠ ENGAGED                    GCS PS5 controller ○ NOT CONNECTED
+DRIVE SYSTEM                                     Steam Deck 1       ✓ CONNECTED
+ MCU                ✓ 1.0 Hz                    NETWORK
+ Motor drivers      ✓ 50 Hz                      Tailscale          ✓ CONNECTED
+ Wheel odometry     ✓ 50 Hz                      Internet           ✓ 412 ms
+POSITIONING                                      Doodle Labs radio  ✓ CONNECTED
+ IMU orientation    ✓ heading 214° SW            Tailscale traffic  ✓ ↑ 2.1 Mbps · ↓ 12 kbps
+ GPS 0              ✓ 5.0 Hz · RTK FIXED         Radio traffic      ✓ ↑ 48 kbps · ↓ 9 kbps
+ GPS 1              ⚠ 5.0 Hz · RTK FLOAT
+ IMU 0              ✓ 50 Hz
 ```
 
-The snapshot is bare by default: one line per check and the overall status. Add
+(Trimmed; the real snapshot lists every check.) The overall status comes first, then one
+line per check, in as many columns as the terminal fits: one in a narrow terminal, two
+at about 100 characters, three in a wide one like a maximized robot terminal. Add
 `--details` (`-d`) to see the reason under each warning or error. The dashboard
 groups the same checks into cards: Power & Safety, Drive System, Positioning,
 Perception, Operator Control, Mission Services, Network, and ROS & Diagnostics, with the
@@ -145,19 +140,29 @@ team review:
 - The 3D lidar's voxel-filtered cloud arrives unevenly (about 1.5-4 Hz, gaps up to
   1.1 s; `ros2 topic hz` agrees), so that check averages over 15 s.
 - `sensors/ins_0/xvn/odometry_enu` keeps publishing without a fix or base station, but
-  every value is 0. The dashboard shows that as NOT INITIALIZED. It reports heading as a
-  compass reading (0 = North, 90 = East), converted from ROS's ENU yaw (0 = East).
+  every value is 0. The dashboard shows that as NOT INITIALIZED (red). It reports heading
+  as a compass reading (0 = North, 90 = East), converted from ROS's ENU yaw (0 = East).
+- IMU orientation and IMU 0 are only ever green or red, so anything reading the status
+  sees green whenever real data is arriving. Red means every value is 0, or the values
+  haven't changed for 10 s (a stuck driver; real sensors always have some noise). There
+  are no tilt or gravity warnings. IMU 0's rate limits still apply.
 - GPS colors follow the fix type: RTK FIXED green, RTK FLOAT yellow, GNSS FIX or NO FIX
   red. Without RTK corrections (for example indoors, or with no base station) the
   overall status is ERROR.
 - `joy_teleop/joy` (the onboard Bluetooth PS4 controller) publishes even with no
   controller attached; the triggers (axes 2 and 5) rest at 1.0 only when one is.
-- IMU 0 runs at 50 Hz (set in `robot.yaml`). Its check also confirms the readings are
-  real: the IMU should measure gravity, about 9.8 m/s².
+- IMU 0 runs at 50 Hz (set in `robot.yaml`); it warns below 40 Hz and errors below 25 Hz.
 - The Doodle Labs radio's USB network interface (`enx` plus its MAC address) only
   exists while the radio is connected; its `br0` address is permanent, so it isn't used.
-- Outdoors the robot uses the radio with Wi-Fi off, so Wi-Fi DISCONNECTED is shown in gray,
-  not as a warning.
+- Wi-Fi isn't checked, by request. Internet, Tailscale and the radio cover connectivity.
+- Over the 5G modem, internet round trips of up to 500 ms are normal, so Internet only
+  warns above 1 s. Its detail shows packet loss over the last 20 pings.
+- Video goes to the ground station as GStreamer streams over Tailscale (riding the 5G
+  modem) or the radio. **Tailscale traffic** and **Radio traffic** show how much each
+  interface sends and receives, like a packet capture's totals, so an extra stream the
+  ground station opens shows up as more data sent. They're informational and never
+  warn unless `warn_tx_mbps` is set. The 5G modem's own interface is a commented-out row
+  in the config; fill in its name from `ip -br link`.
 - Clearpath diagnostics always carry two warnings that aren't faults: the MCU's "new
   firmware available" notice and the Wi-Fi monitor. The config excludes both. The
   controller manager's "high execution jitter" warning is real timing data and is still
@@ -172,11 +177,11 @@ indoors, charging, with the e-stop engaged:
 | Check | Shows | Why |
 |---|---|---|
 | GPS 0, GPS 1 | ✗ NO FIX | No satellites indoors. This alone makes the overall status ERROR |
-| IMU orientation | ⚠ NOT INITIALIZED | The INS publishes all zeros until it has a fix |
+| IMU orientation | ✗ NOT INITIALIZED | The INS publishes all zeros until it has a fix |
 | Emergency stop | ⚠ ENGAGED | E-stop pressed |
 | Clearpath diagnostics | ⚠ several WARN | The Lynx motor drivers report "E-stopped" (and "Frequency too low") while the e-stop is engaged |
 | Doodle Labs radio | ⚠ NOT CONNECTED | Whenever the radio isn't connected to the robot |
-| Wi-Fi, PS4 and GCS controllers | ○ gray | Off or not connected; gray never counts against the overall status |
+| PS4, GCS and Steam Deck controllers | ○ gray | Off or not connected; gray never counts against the overall status |
 
 Anything else that isn't green indoors is worth a look.
 
@@ -212,8 +217,9 @@ Then open `http://localhost:8088`, or run `ros2 run husky_health_monitor health_
 in a third terminal. Stop both with Ctrl-C. To talk to the Husky again, open a new terminal.
 
 Available faults: `low_battery`, `estop`, `gps_1` (stops), `no_fix` (GPS 0),
-`rtk_float` (GPS 1), `slow_imu`, `imu_zeros`, `rear_camera`, `ps4` (onboard controller
-not connected), `joystick` (GCS PS5 disconnected), `tilt` (30° slope), `diagnostics`. On a laptop the
+`rtk_float` (GPS 1), `slow_imu`, `imu_zeros`, `imu_frozen`, `ins_zeros` (orientation not
+initialized), `ins_frozen`, `rear_camera`, `ps4` (onboard controller not connected),
+`joystick` (GCS PS5 disconnected), `diagnostics`. On a laptop the
 Clearpath-specific checks (MCU, motors) still work, because the mock publishes standard
 stand-in message types.
 
@@ -244,9 +250,9 @@ patterns may use `*`; a pattern starting with `*` matches in any namespace.
 | `battery` | `sensor_msgs/BatteryState` charge | `warn_below_percent` (30), `error_below_percent` (15), `percentage_scale` |
 | `navsat` | `sensor_msgs/NavSatFix` rate and fix type (-1 NO FIX, 0 GNSS FIX, 1 RTK FLOAT, 2 RTK FIXED) | `expected_hz`, `status_levels` (level per fix type, e.g. `{2: ok, 1: warn, 0: error, -1: error}`), or `no_fix_level` and `min_status`; `fix_labels` |
 | `bool` | A boolean field, e.g. e-stop | `field` (`data`), `ok_value` (`true`, `false` or `any`), `true_label`, `false_label`, `bad_level` (`warn`, `error`, or `idle` for gray) |
-| `orientation` | Heading, roll and pitch from a quaternion, with optional tilt limits; an exactly-zero orientation shows as NOT INITIALIZED | `field` (`pose.pose.orientation`), `heading` (`compass`: 0 = North, or `enu`), `warn_tilt_deg`, `error_tilt_deg`, `identity_means_uninitialized` (true) |
+| `orientation` | Heading, roll and pitch from a quaternion, with optional tilt limits; an exactly-zero orientation is an error (NOT INITIALIZED) | `field` (`pose.pose.orientation`), `heading` (`compass`: 0 = North, or `enu`), `warn_tilt_deg`, `error_tilt_deg`, `frozen_s` (error when unchanged this long), `identity_means_uninitialized` (true) |
 | `joystick` | A joy topic that publishes even with no controller; connected is read from axes that rest away from 0 only when one is attached | `connected_axes` (`[2, 5]`, the PS4 triggers), `timeout_s` |
-| `imu` | `sensor_msgs/Imu` rate, plus readings that aren't all zero and measure gravity | `expected_hz`, `gravity_check` (true), `gravity_tolerance` (3 m/s²) |
+| `imu` | `sensor_msgs/Imu` rate, plus readings that aren't all zero, keep changing and measure gravity | `expected_hz`, `frozen_s`, `gravity_check` (true), `gravity_tolerance` (3 m/s²) |
 | `field` | Any field: numeric thresholds or allowed values | `field` (e.g. `status.temperature`), `warn_above`, `error_above`, `warn_below`, `error_below`, `ok_values`, `unit`, `scale` |
 | `diagnostics` | A `DiagnosticStatus` or `DiagnosticArray` (e.g. Clearpath's `diagnostics_agg`) | `include`, `exclude` (glob on names), `stale_level` |
 | `node` | Nodes matching a name or pattern are running | `node`, `min_count` |
@@ -254,7 +260,8 @@ patterns may use `*`; a pattern starting with `*` matches in any namespace.
 | `ros_graph` | The monitor can see the ROS graph at all | `min_nodes` |
 | `system` | CPU, memory, disk or temperature of the onboard computer | `metric`, `warn_above`, `error_above`, `path` |
 | `interface` | A network interface exists and is up, and by default has an IPv4 address | `interface` (a name or glob, e.g. `enx00301a*`), `require_ipv4` (true) |
-| `ping` | A host answers ping (e.g. 1.1.1.1 for internet, or the ground station) | `host`, `warn_ms`, `period_s` |
+| `traffic` | Data sent and received on a network interface, in bits per second (informational) | `interface` (a name or glob; matches are summed), `window_s` (5), `warn_tx_mbps`, `warn_rx_mbps` |
+| `ping` | A host answers ping (e.g. 1.1.1.1 for internet, or the ground station); shows packet loss | `host`, `warn_ms`, `timeout_s`, `period_s`, `loss_window` (20) |
 | `systemd` | A systemd service is active (`mors@*.service`, `tailscaled`) | `unit`, `user` (a `--user` unit), `period_s`, `status_ok` (status-text prefixes that mean healthy, e.g. `[Connected]` for Tailscale) |
 
 Options every check accepts:
@@ -273,7 +280,7 @@ Rate checks warn below 80% of `expected_hz`, error below 50%, and go STALE when 
 message has arrived for `timeout_s` (default: three periods, at least 2 s). A check that
 dropped below a threshold only recovers once the rate is 10% above it again, so a topic
 hovering at the threshold doesn't flip back and forth. Topics
-that are only published on change (e-stop, Wi-Fi) have no `expected_hz`, so they are
+that are only published on change (e-stop, target tracking) have no `expected_hz`, so they are
 never marked stale. Topics published once and kept (latched, like `robot_description`)
 are detected automatically; a transient-local topic that keeps streaming, like
 `platform/odom`, is still rate-checked.
