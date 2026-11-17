@@ -624,9 +624,9 @@ def test_default_gateway_from_routing_table(tmp_path, monkeypatch):
 def test_ping_gateway_reports_target_and_missing_route():
     check = make({'name': '5G router', 'type': 'ping', 'host': 'default_gateway',
                   'interface': 'br0', 'warn_ms': 100, 'missing_level': 'warn'})
-    check.record(2.0, '10.0.0.1')
+    check.record(0.4, '10.0.0.1')
     result = check.evaluate(Context(now=0))
-    assert (result.level, result.value) == (OK, '2 ms')
+    assert (result.level, result.value) == (OK, '0.4 ms')  # not rounded down to 0
     assert result.detail.startswith('10.0.0.1 (default gateway)')
     check.record(None, '')
     gone = check.evaluate(Context(now=1))

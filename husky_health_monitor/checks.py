@@ -963,7 +963,8 @@ class PingCheck(Check):
             f'{self.target} ({self.host.replace("_", " ")})'
         if self.rtt_ms is None:
             return self.missing('UNREACHABLE', f'{where} did not answer within {self.timeout_s:g} s')
-        value = f'{self.rtt_ms:.0f} ms'
+        # A router on the robot's own network answers in well under 1 ms; don't show that as 0
+        value = f'{self.rtt_ms:.1f} ms' if self.rtt_ms < 10 else f'{self.rtt_ms:.0f} ms'
         lost = 100.0 * self.recent.count(False) / len(self.recent)
         loss = f'{lost:.0f}% loss over the last {len(self.recent)} pings'
         if self.rtt_ms > self.warn_ms:
