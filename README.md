@@ -109,8 +109,7 @@ this repo. Get the real values from the setup notes:
    ```
 
    Copy the suggested values into `config/a300_00095.yaml` and rebuild (or pass your
-   own file with `config:=`). The GPS navigation service is still a commented-out
-   placeholder in **Mission Services**; fill in its unit name once it exists.
+   own file with `config:=`).
 
 ### A short `health` command
 
@@ -268,7 +267,7 @@ patterns may use `*`; a pattern starting with `*` matches in any namespace.
 | `interface` | A network interface exists and is up, and by default has an IPv4 address | `interface` (a name or glob, e.g. `enx00301a*`), `require_ipv4` (true) |
 | `traffic` | Data sent and received on a network interface, in bits per second (informational) | `interface` (a name or glob; matches are summed), `window_s` (5), `warn_tx_mbps`, `warn_rx_mbps` |
 | `ping` | A host answers ping (e.g. 1.1.1.1 for internet, or the ground station); shows packet loss | `host` (an address, or `default_gateway` for the router the default route goes through), `interface` (with `default_gateway`: only routes through it), `warn_ms`, `timeout_s`, `period_s`, `loss_window` (20) |
-| `systemd` | A systemd service is active (`mors@*.service`, `tailscaled`) | `unit`, `user` (a `--user` unit), `period_s`, `status_ok` (status-text prefixes that mean healthy, e.g. `[Connected]` for Tailscale) |
+| `systemd` | A systemd service is active (`mors@*.service`, `gps-nav`, `tailscaled`) | `unit`, `user` (a `--user` unit), `period_s`, `status_ok` (status-text prefixes that mean healthy, e.g. `[Connected]` for Tailscale) |
 
 Options every check accepts:
 
@@ -388,7 +387,7 @@ Things to know:
 | ROS graph: `NO NODES` | Different `ROS_DOMAIN_ID`, wrong `ROS_DISCOVERY_SERVER`, or the robot's ROS stack isn't up |
 | Many checks `NO PUBLISHER` but `ros2 topic list` shows them | `ROS_SUPER_CLIENT` isn't `True` in the monitor's shell (the node logs a warning) |
 | `NO TYPE` | The message package isn't installed or sourced where the monitor runs (e.g. Clearpath messages on a laptop) |
-| Service `NOT FOUND` | The monitor isn't running on the robot, or the unit name is wrong; check `systemctl list-units 'mors@*'` |
+| Service `NOT FOUND` | The monitor isn't running on the robot, or the unit name is wrong; check `systemctl list-units 'mors@*' gps-nav.service` |
 | A connected controller shows `NOT CONNECTED` | For an operator controller, its joy node only publishes on input; raise `timeout_s` or set the joy node's `autorepeat_rate`. For the PS4, check `ros2 topic echo --once /a300_00095/joy_teleop/joy` shows axes 2 and 5 at 1.0 |
 | Node or topic check `NOT RUNNING` | The name doesn't match; check `ros2 node list` / `ros2 topic list` |
 | Rate checks flicker between OK and WARNING | `expected_hz` is too close to the real rate; use `--calibrate`. For a topic that's naturally uneven, add `window_s` to average over longer |

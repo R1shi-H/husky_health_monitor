@@ -41,6 +41,7 @@ def test_shipped_config_builds():
     by_name = {c.name: c for _, checks in groups for c in checks}
     assert 'Wi-Fi' not in by_name
     assert by_name['Steam Deck 3'].topic == '/a300_00095/operators/steamdeck_3/joy'
+    assert by_name['GPS navigation'].unit == 'gps-nav.service'
     assert by_name['Internet'].warn_ms == 1000  # 5G modem round trips reach 500 ms
 
 

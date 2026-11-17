@@ -197,10 +197,10 @@ groups:
         type: systemd
         unit: mors@atak_bridge.service
         critical: false
-      # GPS navigation: service name TBD
-      # - name: GPS navigation
-      #   type: systemd
-      #   unit: mors@<name>.service
+      - name: GPS navigation
+        type: systemd
+        unit: gps-nav.service
+        description: GPS navigation from ATAK goals (gps_nav_pkg).
       - name: Target tracking
         type: bool
         topic: object_tracking/enabled
