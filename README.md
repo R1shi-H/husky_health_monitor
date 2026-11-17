@@ -161,8 +161,14 @@ team review:
   modem) or the radio. **Tailscale traffic** and **Radio traffic** show how much each
   interface sends and receives, like a packet capture's totals, so an extra stream the
   ground station opens shows up as more data sent. They're informational and never
-  warn unless `warn_tx_mbps` is set. The 5G modem's own interface is a commented-out row
-  in the config; fill in its name from `ip -br link`.
+  warn unless `warn_tx_mbps` is set. The 5G modem has no interface of its own on the
+  robot: it's a router on the platform network, and the default route goes out `br0`
+  (which bridges both Ethernet ports). `br0` also carries lidar and MCU traffic, so it
+  isn't counted; Tailscale traffic covers what reaches the ground station.
+- **5G router** pings that router, found as the default gateway through `br0` (so its
+  address isn't in the repo). Read it with Internet: router OK but Internet down means no
+  cellular service; router down means the modem is off, unplugged or rebooting. In local
+  test mode it pings the laptop's own router instead.
 - Clearpath diagnostics always carry two warnings that aren't faults: the MCU's "new
   firmware available" notice and the Wi-Fi monitor. The config excludes both. The
   controller manager's "high execution jitter" warning is real timing data and is still
@@ -261,7 +267,7 @@ patterns may use `*`; a pattern starting with `*` matches in any namespace.
 | `system` | CPU, memory, disk or temperature of the onboard computer | `metric`, `warn_above`, `error_above`, `path` |
 | `interface` | A network interface exists and is up, and by default has an IPv4 address | `interface` (a name or glob, e.g. `enx00301a*`), `require_ipv4` (true) |
 | `traffic` | Data sent and received on a network interface, in bits per second (informational) | `interface` (a name or glob; matches are summed), `window_s` (5), `warn_tx_mbps`, `warn_rx_mbps` |
-| `ping` | A host answers ping (e.g. 1.1.1.1 for internet, or the ground station); shows packet loss | `host`, `warn_ms`, `timeout_s`, `period_s`, `loss_window` (20) |
+| `ping` | A host answers ping (e.g. 1.1.1.1 for internet, or the ground station); shows packet loss | `host` (an address, or `default_gateway` for the router the default route goes through), `interface` (with `default_gateway`: only routes through it), `warn_ms`, `timeout_s`, `period_s`, `loss_window` (20) |
 | `systemd` | A systemd service is active (`mors@*.service`, `tailscaled`) | `unit`, `user` (a `--user` unit), `period_s`, `status_ok` (status-text prefixes that mean healthy, e.g. `[Connected]` for Tailscale) |
 
 Options every check accepts:

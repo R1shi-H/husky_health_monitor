@@ -223,6 +223,16 @@ groups:
         unit: tailscaled.service
         status_ok: [Connected]  # tailscaled can be running but logged out or stopped
         missing_level: warn
+      # The 5G modem: a router on the platform network, and the default gateway through br0.
+      # Found from the routing table, so no address is stored here. With Internet below:
+      # router OK but Internet down means no cellular service; router down means the modem is
+      # off, unplugged or rebooting.
+      - name: 5G router
+        type: ping
+        host: default_gateway
+        interface: br0
+        warn_ms: 100
+        missing_level: warn
       # Can the robot reach the internet over any link. Over the 5G modem round trips of up
       # to 500 ms are normal, so it only warns above 1 s.
       - name: Internet
@@ -251,10 +261,10 @@ groups:
       - name: Radio traffic
         type: traffic
         interface: 'enx00301a*'
-      # The 5G modem's own interface; find its name with `ip -br link` on the robot
-      # - name: 5G modem traffic
-      #   type: traffic
-      #   interface: wwan0
+      # The 5G modem isn't counted on its own: it's a router on the robot's platform network
+      # (the default gateway, reached through br0), and br0 also carries the lidar and MCU
+      # traffic, so its counters can't separate the two. Tailscale traffic covers what goes
+      # to the ground station over the modem.
       # Uncomment once you know the ground station's address (Doodle Labs or Tailscale IP)
       # - name: Ground station link
       #   type: ping

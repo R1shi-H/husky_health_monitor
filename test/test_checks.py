@@ -603,3 +603,31 @@ def test_cli_columns_follow_terminal_width():
     # A wide screen (like the robot's maximized terminal) gets three columns
     widest = render(snapshot(), color=False, width=190).splitlines()
     assert len(widest) < len(wide)
+
+
+ROUTES = """Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT
+wlp3s0\t00000000\t0101A8C0\t0003\t0\t0\t600\t00000000\t0\t0\t0
+br0\t00000000\t0100000A\t0003\t0\t0\t100\t00000000\t0\t0\t0
+br0\t0083A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0
+"""
+
+
+def test_default_gateway_from_routing_table(tmp_path, monkeypatch):
+    routes = tmp_path / 'route'
+    routes.write_text(ROUTES)
+    assert probes.default_gateway(route_file=routes) == '10.0.0.1'  # lowest metric
+    assert probes.default_gateway('wlp3s0', route_file=routes) == '192.168.1.1'
+    assert probes.default_gateway('eth9', route_file=routes) is None
+    assert probes.ping_target('1.1.1.1') == '1.1.1.1'
+
+
+def test_ping_gateway_reports_target_and_missing_route():
+    check = make({'name': '5G router', 'type': 'ping', 'host': 'default_gateway',
+                  'interface': 'br0', 'warn_ms': 100, 'missing_level': 'warn'})
+    check.record(2.0, '10.0.0.1')
+    result = check.evaluate(Context(now=0))
+    assert (result.level, result.value) == (OK, '2 ms')
+    assert result.detail.startswith('10.0.0.1 (default gateway)')
+    check.record(None, '')
+    gone = check.evaluate(Context(now=1))
+    assert (gone.level, gone.value) == (WARN, 'NO ROUTE') and 'through br0' in gone.detail

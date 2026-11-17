@@ -3,6 +3,8 @@ background thread so a slow answer never delays the checks."""
 
 import os
 import re
+import socket
+import struct
 import subprocess
 
 # Local test mode (set by local_test_env.sh): units that don't exist on this computer are
@@ -10,6 +12,10 @@ import subprocess
 # tried without the robot. Units that do exist here (e.g. tailscaled) are always real.
 SIMULATE_ENV = 'HUSKY_HEALTH_SIMULATE_SERVICES'
 FAILED_ENV = 'HUSKY_HEALTH_FAILED_SERVICES'
+
+# A ping check's host can be this instead of an address: the router the default route goes
+# through (e.g. the 5G modem), found from the routing table so no address lives in the config
+DEFAULT_GATEWAY = 'default_gateway'
 
 _RTT = re.compile(r'time[=<]([\d.]+)\s*ms')
 _PROPERTIES = 'LoadState,ActiveState,SubState,Result,StatusText,ActiveEnterTimestamp'
@@ -24,6 +30,41 @@ def ping(host, timeout_s):
         return None
     match = _RTT.search(out.stdout)
     return float(match[1]) if out.returncode == 0 and match else None
+
+
+def default_gateway(interface=None, route_file='/proc/net/route'):
+    """The default route's gateway address (the lowest-metric one), optionally only routes
+    through interface; None if there's no such route."""
+    try:
+        with open(route_file) as f:
+            rows = [line.split() for line in f.readlines()[1:]]
+    except OSError:
+        return None
+    best = None
+    for row in rows:
+        if len(row) < 8:
+            continue
+        iface, dest, gateway, flags, metric, mask = row[0], row[1], row[2], row[3], row[6], row[7]
+        up_via_gateway = (int(flags, 16) & 0x3) == 0x3  # RTF_UP | RTF_GATEWAY
+        if dest != '00000000' or mask != '00000000' or not up_via_gateway:
+            continue
+        if interface and iface != interface:
+            continue
+        if best is None or int(metric) < best[0]:
+            best = (int(metric), socket.inet_ntoa(struct.pack('<L', int(gateway, 16))))
+    return best[1] if best else None
+
+
+def ping_target(host, interface=None):
+    """The address to ping for a check's host: the host itself, or for default_gateway the
+    current gateway ('' if there's none). In local test mode any default route will do,
+    since a laptop's interfaces don't match the robot's."""
+    if host != DEFAULT_GATEWAY:
+        return host
+    gateway = default_gateway(interface)
+    if gateway is None and interface and os.environ.get(SIMULATE_ENV):
+        gateway = default_gateway()
+    return gateway or ''
 
 
 def systemd_state(unit, user=False, timeout_s=3.0):

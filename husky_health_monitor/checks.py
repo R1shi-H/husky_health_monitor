@@ -940,30 +940,40 @@ class PingCheck(Check):
         self.period_s = float(spec.get('period_s', 5.0))
         self.timeout_s = float(spec.get('timeout_s', 2.0))
         self.warn_ms = float(spec.get('warn_ms', 250))
+        # With host: default_gateway, only consider default routes through this interface
+        self.interface = spec.get('interface')
         self.rtt_ms = None
+        self.target = None  # the address actually pinged; '' when there was no route
         self.attempts = 0
         self.recent = deque(maxlen=int(spec.get('loss_window', 20)))  # answered or not
 
-    def record(self, rtt_ms):
+    def record(self, rtt_ms, target=None):
         self.rtt_ms = rtt_ms
+        self.target = self.host if target is None else target
         self.attempts += 1
         self.recent.append(rtt_ms is not None)
 
     def evaluate(self, ctx):
         if self.attempts == 0:
             return Result(WAITING, 'WAITING', f'pinging {self.host}')
+        if self.target == '':
+            via = f' through {self.interface}' if self.interface else ''
+            return self.missing('NO ROUTE', f'this computer has no default route{via}')
+        where = self.target if self.target == self.host else \
+            f'{self.target} ({self.host.replace("_", " ")})'
         if self.rtt_ms is None:
-            return self.missing('UNREACHABLE', f'{self.host} did not answer within {self.timeout_s:g} s')
+            return self.missing('UNREACHABLE', f'{where} did not answer within {self.timeout_s:g} s')
         value = f'{self.rtt_ms:.0f} ms'
         lost = 100.0 * self.recent.count(False) / len(self.recent)
         loss = f'{lost:.0f}% loss over the last {len(self.recent)} pings'
         if self.rtt_ms > self.warn_ms:
-            return Result(WARN, value, _join(f'{self.host} slower than {self.warn_ms:g} ms', loss),
+            return Result(WARN, value, _join(f'{where} slower than {self.warn_ms:g} ms', loss),
                           self.rtt_ms)
-        return Result(OK, value, _join(self.host, loss), self.rtt_ms)
+        return Result(OK, value, _join(where, loss), self.rtt_ms)
 
     def describe(self):
-        return {**super().describe(), 'host': self.host, 'warn_ms': self.warn_ms}
+        return {**super().describe(), 'host': self.host, 'warn_ms': self.warn_ms,
+                'interface': self.interface}
 
 
 class SystemdCheck(Check):

@@ -24,7 +24,7 @@ from .checks import (ERROR, IDLE, OK, OVERALL_LABEL, SEVERITY, WAITING, WARN, Co
                      Context, GraphInfo, PingCheck, Result, SystemCheck, SystemdCheck,
                      TopicCheck, TopicGraphCheck, build_groups, effective_level, overall_level)
 from .history import History
-from .probes import SIMULATE_ENV, ping, systemd_state
+from .probes import SIMULATE_ENV, ping, ping_target, systemd_state
 from .system_stats import SystemSampler
 from .web_server import DashboardServer
 
@@ -297,7 +297,8 @@ class HealthMonitor(Node):
             for check in probes:
                 if time.monotonic() >= due[check.id]:
                     if isinstance(check, PingCheck):
-                        check.record(ping(check.host, check.timeout_s))
+                        target = ping_target(check.host, check.interface)
+                        check.record(ping(target, check.timeout_s) if target else None, target)
                     else:
                         check.record(*systemd_state(check.unit, check.user))
                     due[check.id] = time.monotonic() + check.period_s
